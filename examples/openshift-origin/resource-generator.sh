@@ -23,6 +23,8 @@ set -o pipefail
 ORIGIN=$(dirname "${BASH_SOURCE}")
 KUBE_ROOT=$(dirname "${BASH_SOURCE}")/../..
 source "${KUBE_ROOT}/cluster/kubectl.sh" > /dev/null 2>&1
+PUB_KUBE=https://10.0.0.2:443
+PUB_MASTER=https://10.0.0.2:443
 
 # Check all prerequisites are on the path
 HAVE_JQ=$(which jq)
@@ -36,6 +38,20 @@ if [[ -z ${HAVE_BASE64} ]]; then
  echo "Please install base64"
  exit 1
 fi
+
+# Detect the OS name so that we know the option to disable line wrapping in base64
+case "$(uname -s)" in
+    Darwin)
+	BASE64_NOWRAP_OPT=--break=0
+	;;
+    Linux)
+	BASE64_NOWRAP_OPT=--wrap=0
+	;;
+    *)
+	echo "Unsupported host OS.  Must be Linux or Mac OS X." >&2
+	exit 1
+	;;
+esac
 
 # Capture information about your kubernetes cluster
 TEMPLATE="--template=\"{{ index . \"current-context\" }}\""
@@ -74,11 +90,11 @@ cat <<EOF >"${ORIGIN}/origin-auth-path"
 EOF
 
 # Collect all the secrets and encode as base64
-ORIGIN_KUBECONFIG_DATA=$( cat ${ORIGIN}/origin-kubeconfig.yaml | base64 --wrap=0)
-ORIGIN_CERTIFICATE_AUTHORITY_DATA=$(cat ${CERTIFICATE_AUTHORITY} | base64 --wrap=0)
-ORIGIN_AUTH_PATH_DATA=$(cat ${ORIGIN}/origin-auth-path | base64 --wrap=0)
-ORIGIN_CERT_FILE=$( cat ${KUBE_CERT_FILE//\"/} | base64 --wrap=0)
-ORIGIN_KEY_FILE=$( cat ${KUBE_KEY_FILE//\"/}  | base64 --wrap=0)
+ORIGIN_KUBECONFIG_DATA=$( cat ${ORIGIN}/origin-kubeconfig.yaml | sed -e "s#@KUBERNETES_MASTER@#${KUBE_MASTER}#g" | base64 ${BASE64_NOWRAP_OPT})
+ORIGIN_CERTIFICATE_AUTHORITY_DATA=$(cat ${CERTIFICATE_AUTHORITY} | base64 ${BASE64_NOWRAP_OPT})
+ORIGIN_AUTH_PATH_DATA=$(cat ${ORIGIN}/origin-auth-path | base64 ${BASE64_NOWRAP_OPT})
+ORIGIN_CERT_FILE=$( cat ${KUBE_CERT_FILE//\"/} | base64 ${BASE64_NOWRAP_OPT})
+ORIGIN_KEY_FILE=$( cat ${KUBE_KEY_FILE//\"/}  | base64 ${BASE64_NOWRAP_OPT})
 
 cat <<EOF >"${ORIGIN}/secret.json"
 {
@@ -105,7 +121,9 @@ cat <<EOF >"${ORIGIN}/pod.json"
   "apiVersion": "v1beta1",
   "id": "openshift",
   "kind": "Pod",   
-  "labels": {"name": "origin"}, 
+  "labels": {
+    "name": "origin"
+  }, 
   "desiredState": {
     "manifest": {
       "containers": [
@@ -115,8 +133,8 @@ cat <<EOF >"${ORIGIN}/pod.json"
           "master",
           "--kubernetes=${KUBE_MASTER}",
           "--kubeconfig=/etc/secret-volume/kubeconfig",
-          "--public-kubernetes=https://10.245.1.3:8443",
-          "--public-master=https://10.245.1.3:8443",
+          "--public-kubernetes=${PUB_KUBE}",
+          "--public-master=${PUB_MASTER}",
         ],
         "image": "openshift/origin:latest",
         "imagePullPolicy": "PullIfNotPresent",
