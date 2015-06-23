@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -113,7 +112,7 @@ func TestDeleteObject(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{})
 
 	cmd := NewCmdDelete(f, buf)
-	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.json")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.yaml")
 	cmd.Flags().Set("cascade", "false")
 	cmd.Run(cmd, []string{})
 
@@ -142,7 +141,7 @@ func TestDeleteObjectNotFound(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{})
 
 	cmd := NewCmdDelete(f, buf)
-	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.json")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.yaml")
 	cmd.Flags().Set("cascade", "false")
 	filenames := cmd.Flags().Lookup("filename").Value.(*util.StringList)
 	err := RunDelete(f, buf, cmd, []string{}, *filenames)
@@ -170,7 +169,7 @@ func TestDeleteObjectIgnoreNotFound(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{})
 
 	cmd := NewCmdDelete(f, buf)
-	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.json")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.yaml")
 	cmd.Flags().Set("cascade", "false")
 	cmd.Flags().Set("ignore-not-found", "true")
 	cmd.Run(cmd, []string{})
@@ -203,8 +202,8 @@ func TestDeleteMultipleObject(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{})
 
 	cmd := NewCmdDelete(f, buf)
-	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.json")
-	cmd.Flags().Set("filename", "../../../examples/guestbook/frontend-service.json")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.yaml")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/frontend-service.yaml")
 	cmd.Flags().Set("cascade", "false")
 	cmd.Run(cmd, []string{})
 
@@ -236,11 +235,11 @@ func TestDeleteMultipleObjectContinueOnMissing(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{})
 
 	cmd := NewCmdDelete(f, buf)
-	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.json")
-	cmd.Flags().Set("filename", "../../../examples/guestbook/frontend-service.json")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/redis-master-controller.yaml")
+	cmd.Flags().Set("filename", "../../../examples/guestbook/frontend-service.yaml")
 	cmd.Flags().Set("cascade", "false")
 	filenames := cmd.Flags().Lookup("filename").Value.(*util.StringList)
-	fmt.Printf("filenames: %v\n", filenames)
+	t.Logf("filenames: %v\n", filenames)
 	err := RunDelete(f, buf, cmd, []string{}, *filenames)
 	if err == nil || !errors.IsNotFound(err) {
 		t.Errorf("unexpected error: expected NotFound, got %v", err)

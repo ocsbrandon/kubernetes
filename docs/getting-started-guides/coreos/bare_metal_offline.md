@@ -1,6 +1,30 @@
-# Bare Metal CoreOS with Kubernetes (OFFLINE)
+Bare Metal CoreOS with Kubernetes (OFFLINE)
+------------------------------------------
 Deploy a CoreOS running Kubernetes environment. This particular guild is made to help those in an OFFLINE system, wither for testing a POC before the real deal, or you are restricted to be totally offline for your applications.
 
+**Table of Contents**
+
+    - [Prerequisites](#prerequisites)
+    - [High Level Design](#high-level-design)
+    - [This Guides variables](#this-guides-variables)
+    - [Setup PXELINUX CentOS](#setup-pxelinux-centos)
+    - [Adding CoreOS to PXE](#adding-coreos-to-pxe)
+    - [DHCP configuration](#dhcp-configuration)
+    - [Kubernetes](#kubernetes)
+    - [Cloud Configs](#cloud-configs)
+        - [master.yml](#masteryml)
+- [cloud-config](#cloud-config)
+        - [node.yml](#nodeyml)
+- [cloud-config](#cloud-config)
+    - [New pxelinux.cfg file](#new-pxelinuxcfg-file)
+    - [Specify the pxelinux targets](#specify-the-pxelinux-targets)
+    - [Creating test pod](#creating-test-pod)
+    - [Helping commands for debugging](#helping-commands-for-debugging)
+
+
+## Prerequisites
+1. Installed *CentOS 6* for PXE server
+2. At least two bare metal nodes to work with
 
 ## High Level Design
 1. Manage the tftp directory 
@@ -11,10 +35,6 @@ Deploy a CoreOS running Kubernetes environment. This particular guild is made to
 4. Setup nodes to deploy CoreOS creating a etcd cluster. 
 5. Have no access to the public [etcd discovery tool](https://discovery.etcd.io/). 
 6. Installing the CoreOS slaves to become Kubernetes minions.
-
-## Pre-requisites
-1. Installed *CentOS 6* for PXE server
-2. At least two bare metal nodes to work with
 
 ## This Guides variables
 | Node Description              | MAC               | IP          |
@@ -159,7 +179,7 @@ This section covers configuring the DHCP server to hand out our new images. In t
 
 We will be specifying the node configuration later in the guide.
 
-# Kubernetes
+## Kubernetes
 To deploy our configuration we need to create an ```etcd``` master. To do so we want to pxe CoreOS with a specific cloud-config.yml. There are two options we have here. 
 1. Is to template the cloud config file and programmatically create new static configs for different cluster setups.
 2. Have a service discovery protocol running in our stack to do auto discovery.

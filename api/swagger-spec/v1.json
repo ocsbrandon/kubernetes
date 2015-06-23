@@ -603,7 +603,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -631,7 +631,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Endpoints"
        }
       ],
       "produces": [
@@ -1264,7 +1264,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -1292,7 +1292,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Event"
        }
       ],
       "produces": [
@@ -1917,7 +1917,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -1945,7 +1945,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.LimitRange"
        }
       ],
       "produces": [
@@ -2530,7 +2530,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -2550,7 +2550,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Namespace"
        }
       ],
       "produces": [
@@ -3058,7 +3058,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -3078,7 +3078,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Node"
        }
       ],
       "produces": [
@@ -3368,9 +3368,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Node",
-      "nickname": "proxyTRACENode",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Node",
+      "nickname": "proxyOPTIONSNode",
       "parameters": [
        {
         "type": "string",
@@ -3514,9 +3514,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Node",
-      "nickname": "proxyTRACENode",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Node",
+      "nickname": "proxyOPTIONSNode",
       "parameters": [
        {
         "type": "string",
@@ -3899,7 +3899,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -3927,7 +3927,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.PersistentVolumeClaim"
        }
       ],
       "produces": [
@@ -4579,7 +4579,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -4599,7 +4599,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.PersistentVolume"
        }
       ],
       "produces": [
@@ -5096,7 +5096,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -5124,7 +5124,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Pod"
        }
       ],
       "produces": [
@@ -5470,9 +5470,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Pod",
-      "nickname": "proxyTRACEPod",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Pod",
+      "nickname": "proxyOPTIONSPod",
       "parameters": [
        {
         "type": "string",
@@ -5664,9 +5664,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Pod",
-      "nickname": "proxyTRACEPod",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Pod",
+      "nickname": "proxyOPTIONSPod",
       "parameters": [
        {
         "type": "string",
@@ -5787,43 +5787,6 @@
         "code": 200,
         "message": "OK",
         "responseModel": "v1.Pod"
-       }
-      ],
-      "produces": [
-       "application/json"
-      ],
-      "consumes": [
-       "*/*"
-      ]
-     },
-     {
-      "type": "v1.Binding",
-      "method": "POST",
-      "summary": "create binding of a Binding",
-      "nickname": "createBindingBinding",
-      "parameters": [
-       {
-        "type": "string",
-        "paramType": "query",
-        "name": "pretty",
-        "description": "If 'true', then the output is pretty printed.",
-        "required": false,
-        "allowMultiple": false
-       },
-       {
-        "type": "v1.Binding",
-        "paramType": "body",
-        "name": "body",
-        "description": "",
-        "required": true,
-        "allowMultiple": false
-       }
-      ],
-      "responseMessages": [
-       {
-        "code": 200,
-        "message": "OK",
-        "responseModel": "v1.Binding"
        }
       ],
       "produces": [
@@ -5970,7 +5933,24 @@
       "method": "GET",
       "summary": "connect GET requests to exec of Pod",
       "nickname": "connectGetPodExec",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6040,7 +6020,24 @@
       "method": "GET",
       "summary": "connect GET requests to portforward of Pod",
       "nickname": "connectGetPodPortforward",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6059,7 +6056,24 @@
       "method": "GET",
       "summary": "connect GET requests to proxy of Pod",
       "nickname": "connectGetPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6072,7 +6086,24 @@
       "method": "POST",
       "summary": "connect POST requests to proxy of Pod",
       "nickname": "connectPostPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6085,7 +6116,24 @@
       "method": "PUT",
       "summary": "connect PUT requests to proxy of Pod",
       "nickname": "connectPutPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6098,7 +6146,24 @@
       "method": "DELETE",
       "summary": "connect DELETE requests to proxy of Pod",
       "nickname": "connectDeletePodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6111,7 +6176,24 @@
       "method": "HEAD",
       "summary": "connect HEAD requests to proxy of Pod",
       "nickname": "connectHeadPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6124,7 +6206,24 @@
       "method": "OPTIONS",
       "summary": "connect OPTIONS requests to proxy of Pod",
       "nickname": "connectOptionsPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6143,7 +6242,32 @@
       "method": "GET",
       "summary": "connect GET requests to proxy of Pod",
       "nickname": "connectGetPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6156,7 +6280,32 @@
       "method": "POST",
       "summary": "connect POST requests to proxy of Pod",
       "nickname": "connectPostPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6169,7 +6318,32 @@
       "method": "PUT",
       "summary": "connect PUT requests to proxy of Pod",
       "nickname": "connectPutPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6182,7 +6356,32 @@
       "method": "DELETE",
       "summary": "connect DELETE requests to proxy of Pod",
       "nickname": "connectDeletePodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6195,7 +6394,32 @@
       "method": "HEAD",
       "summary": "connect HEAD requests to proxy of Pod",
       "nickname": "connectHeadPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6208,7 +6432,32 @@
       "method": "OPTIONS",
       "summary": "connect OPTIONS requests to proxy of Pod",
       "nickname": "connectOptionsPodProxy",
-      "parameters": [],
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespaces",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the Pod",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "path:*",
+        "description": "path to the resource",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
       "produces": [
        "*/*"
       ],
@@ -6589,7 +6838,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -6617,7 +6866,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.PodTemplate"
        }
       ],
       "produces": [
@@ -7250,7 +7499,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -7278,7 +7527,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.ReplicationController"
        }
       ],
       "produces": [
@@ -7911,7 +8160,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -7939,7 +8188,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.ResourceQuota"
        }
       ],
       "produces": [
@@ -8631,7 +8880,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -8659,7 +8908,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Secret"
        }
       ],
       "produces": [
@@ -9292,7 +9541,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -9320,7 +9569,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.ServiceAccount"
        }
       ],
       "produces": [
@@ -9953,7 +10202,7 @@
         "allowMultiple": false
        },
        {
-        "type": "string",
+        "type": "api.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -9981,7 +10230,7 @@
        {
         "code": 200,
         "message": "OK",
-        "responseModel": "string"
+        "responseModel": "v1.Service"
        }
       ],
       "produces": [
@@ -10319,9 +10568,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Service",
-      "nickname": "proxyTRACEService",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Service",
+      "nickname": "proxyOPTIONSService",
       "parameters": [
        {
         "type": "string",
@@ -10513,9 +10762,9 @@
      },
      {
       "type": "string",
-      "method": "TRACE",
-      "summary": "proxy TRACE requests to Service",
-      "nickname": "proxyTRACEService",
+      "method": "OPTIONS",
+      "summary": "proxy OPTIONS requests to Service",
+      "nickname": "proxyOPTIONSService",
       "parameters": [
        {
         "type": "string",
@@ -10766,6 +11015,11 @@
      "resourceVersion": {
       "type": "string",
       "description": "string that identifies the internal version of this object that can be used by clients to determine when objects have changed; populated by the system, read-only; value must be treated as opaque by clients and passed unmodified back to the server: http://docs.k8s.io/api-conventions.md#concurrency-control-and-consistency"
+     },
+     "generation": {
+      "type": "integer",
+      "format": "int64",
+      "description": "a sequence number representing a specific generation of the desired state; populated by the system; read-only"
      },
      "creationTimestamp": {
       "type": "string",
@@ -11029,6 +11283,10 @@
       "description": "the object being watched; will match the type of the resource endpoint or be a Status object if the type is ERROR"
      }
     }
+   },
+   "api.Patch": {
+    "id": "api.Patch",
+    "properties": {}
    },
    "v1.Status": {
     "id": "v1.Status",
@@ -12095,7 +12353,7 @@
       "type": "any",
       "description": "selector which must match a node's labels for the pod to be scheduled on that node"
      },
-     "serviceAccount": {
+     "serviceAccountName": {
       "type": "string",
       "description": "name of the ServiceAccount to use to run this pod"
      },
@@ -12593,6 +12851,10 @@
       "type": "string",
       "description": "human readable message indicating details about why the pod is in this condition"
      },
+     "reason": {
+      "type": "string",
+      "description": "(brief-CamelCase) reason indicating details about why the pod is in this condition"
+     },
      "hostIP": {
       "type": "string",
       "description": "IP address of the host to which the pod is assigned; empty if not yet scheduled"
@@ -12890,6 +13152,11 @@
       "type": "integer",
       "format": "int32",
       "description": "most recently oberved number of replicas"
+     },
+     "observedGeneration": {
+      "type": "integer",
+      "format": "int64",
+      "description": "reflects the generation of the most recently observed replication controller"
      }
     }
    },

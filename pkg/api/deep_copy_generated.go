@@ -991,6 +991,7 @@ func deepCopy_api_ObjectMeta(in ObjectMeta, out *ObjectMeta, c *conversion.Clone
 	out.SelfLink = in.SelfLink
 	out.UID = in.UID
 	out.ResourceVersion = in.ResourceVersion
+	out.Generation = in.Generation
 	if err := deepCopy_util_Time(in.CreationTimestamp, &out.CreationTimestamp, c); err != nil {
 		return err
 	}
@@ -1377,7 +1378,7 @@ func deepCopy_api_PodSpec(in PodSpec, out *PodSpec, c *conversion.Cloner) error 
 	} else {
 		out.NodeSelector = nil
 	}
-	out.ServiceAccount = in.ServiceAccount
+	out.ServiceAccountName = in.ServiceAccountName
 	out.NodeName = in.NodeName
 	out.HostNetwork = in.HostNetwork
 	if in.ImagePullSecrets != nil {
@@ -1406,6 +1407,7 @@ func deepCopy_api_PodStatus(in PodStatus, out *PodStatus, c *conversion.Cloner) 
 		out.Conditions = nil
 	}
 	out.Message = in.Message
+	out.Reason = in.Reason
 	out.HostIP = in.HostIP
 	out.PodIP = in.PodIP
 	if in.StartTime != nil {
@@ -1598,6 +1600,7 @@ func deepCopy_api_ReplicationControllerSpec(in ReplicationControllerSpec, out *R
 
 func deepCopy_api_ReplicationControllerStatus(in ReplicationControllerStatus, out *ReplicationControllerStatus, c *conversion.Cloner) error {
 	out.Replicas = in.Replicas
+	out.ObservedGeneration = in.ObservedGeneration
 	return nil
 }
 
@@ -2091,13 +2094,13 @@ func deepCopy_api_VolumeSource(in VolumeSource, out *VolumeSource, c *conversion
 	} else {
 		out.Glusterfs = nil
 	}
-	if in.PersistentVolumeClaimVolumeSource != nil {
-		out.PersistentVolumeClaimVolumeSource = new(PersistentVolumeClaimVolumeSource)
-		if err := deepCopy_api_PersistentVolumeClaimVolumeSource(*in.PersistentVolumeClaimVolumeSource, out.PersistentVolumeClaimVolumeSource, c); err != nil {
+	if in.PersistentVolumeClaim != nil {
+		out.PersistentVolumeClaim = new(PersistentVolumeClaimVolumeSource)
+		if err := deepCopy_api_PersistentVolumeClaimVolumeSource(*in.PersistentVolumeClaim, out.PersistentVolumeClaim, c); err != nil {
 			return err
 		}
 	} else {
-		out.PersistentVolumeClaimVolumeSource = nil
+		out.PersistentVolumeClaim = nil
 	}
 	if in.RBD != nil {
 		out.RBD = new(RBDVolumeSource)

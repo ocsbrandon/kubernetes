@@ -260,8 +260,18 @@ const (
 	// Will be automatically emitted as the correct name for the API version.
 	NodeUnschedulable = "spec.unschedulable"
 	ObjectNameField   = "metadata.name"
-	PodHost           = "spec.host"
+	PodHost           = "spec.nodeName"
 	SecretType        = "type"
+
+	EventReason                  = "reason"
+	EventSource                  = "source"
+	EventInvolvedKind            = "involvedObject.kind"
+	EventInvolvedNamespace       = "involvedObject.namespace"
+	EventInvolvedName            = "involvedObject.name"
+	EventInvolvedUID             = "involvedObject.uid"
+	EventInvolvedAPIVersion      = "involvedObject.apiVersion"
+	EventInvolvedResourceVersion = "involvedObject.resourceVersion"
+	EventInvolvedFieldPath       = "involvedObject.fieldPath"
 )
 
 type clientFieldNameToAPIVersionFieldName map[string]string
@@ -302,44 +312,6 @@ func (v versionToResourceToFieldMapping) filterField(apiVersion, resourceType, f
 }
 
 var fieldMappings = versionToResourceToFieldMapping{
-	"v1beta1": resourceTypeToFieldMapping{
-		"nodes": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField:   "name",
-			NodeUnschedulable: "unschedulable",
-		},
-		"minions": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField:   "name",
-			NodeUnschedulable: "unschedulable",
-		},
-		"pods": clientFieldNameToAPIVersionFieldName{
-			PodHost: "DesiredState.Host",
-		},
-		"secrets": clientFieldNameToAPIVersionFieldName{
-			SecretType: "type",
-		},
-		"serviceAccounts": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField: "name",
-		},
-	},
-	"v1beta2": resourceTypeToFieldMapping{
-		"nodes": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField:   "name",
-			NodeUnschedulable: "unschedulable",
-		},
-		"minions": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField:   "name",
-			NodeUnschedulable: "unschedulable",
-		},
-		"pods": clientFieldNameToAPIVersionFieldName{
-			PodHost: "DesiredState.Host",
-		},
-		"secrets": clientFieldNameToAPIVersionFieldName{
-			SecretType: "type",
-		},
-		"serviceAccounts": clientFieldNameToAPIVersionFieldName{
-			ObjectNameField: "name",
-		},
-	},
 	"v1beta3": resourceTypeToFieldMapping{
 		"nodes": clientFieldNameToAPIVersionFieldName{
 			ObjectNameField:   "metadata.name",
@@ -357,6 +329,51 @@ var fieldMappings = versionToResourceToFieldMapping{
 		},
 		"serviceAccounts": clientFieldNameToAPIVersionFieldName{
 			ObjectNameField: "metadata.name",
+		},
+		"endpoints": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField: "metadata.name",
+		},
+		"events": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField:              "metadata.name",
+			EventReason:                  "reason",
+			EventSource:                  "source",
+			EventInvolvedKind:            "involvedObject.kind",
+			EventInvolvedNamespace:       "involvedObject.namespace",
+			EventInvolvedName:            "involvedObject.name",
+			EventInvolvedUID:             "involvedObject.uid",
+			EventInvolvedAPIVersion:      "involvedObject.apiVersion",
+			EventInvolvedResourceVersion: "involvedObject.resourceVersion",
+			EventInvolvedFieldPath:       "involvedObject.fieldPath",
+		},
+	},
+	"v1": resourceTypeToFieldMapping{
+		"nodes": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField:   "metadata.name",
+			NodeUnschedulable: "spec.unschedulable",
+		},
+		"pods": clientFieldNameToAPIVersionFieldName{
+			PodHost: "spec.nodeName",
+		},
+		"secrets": clientFieldNameToAPIVersionFieldName{
+			SecretType: "type",
+		},
+		"serviceAccounts": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField: "metadata.name",
+		},
+		"endpoints": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField: "metadata.name",
+		},
+		"events": clientFieldNameToAPIVersionFieldName{
+			ObjectNameField:              "metadata.name",
+			EventReason:                  "reason",
+			EventSource:                  "source",
+			EventInvolvedKind:            "involvedObject.kind",
+			EventInvolvedNamespace:       "involvedObject.namespace",
+			EventInvolvedName:            "involvedObject.name",
+			EventInvolvedUID:             "involvedObject.uid",
+			EventInvolvedAPIVersion:      "involvedObject.apiVersion",
+			EventInvolvedResourceVersion: "involvedObject.resourceVersion",
+			EventInvolvedFieldPath:       "involvedObject.fieldPath",
 		},
 	},
 }
@@ -459,8 +476,10 @@ func (r *Request) Body(obj interface{}) *Request {
 			r.err = err
 			return r
 		}
+		glog.V(8).Infof("Request Body: %s", string(data))
 		r.body = bytes.NewBuffer(data)
 	case []byte:
+		glog.V(8).Infof("Request Body: %s", string(t))
 		r.body = bytes.NewBuffer(t)
 	case io.Reader:
 		r.body = t
@@ -470,6 +489,7 @@ func (r *Request) Body(obj interface{}) *Request {
 			r.err = err
 			return r
 		}
+		glog.V(8).Infof("Request Body: %s", string(data))
 		r.body = bytes.NewBuffer(data)
 	default:
 		r.err = fmt.Errorf("unknown type used for body: %+v", obj)
@@ -756,6 +776,8 @@ func (r *Request) transformResponse(resp *http.Response, req *http.Request) Resu
 			body = data
 		}
 	}
+	glog.V(8).Infof("Response Body: %s", string(body))
+
 	// Did the server give us a status response?
 	isStatusResponse := false
 	var status api.Status
@@ -811,6 +833,8 @@ func (r *Request) transformUnstructuredResponseError(resp *http.Response, req *h
 			body = data
 		}
 	}
+	glog.V(8).Infof("Response Body: %s", string(body))
+
 	message := "unknown"
 	if isTextResponse(resp) {
 		message = strings.TrimSpace(string(body))

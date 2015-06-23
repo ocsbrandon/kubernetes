@@ -1,4 +1,17 @@
-# Rackspace
+Getting started on Rackspace
+----------------------------
+
+**Table of Contents**
+
+    - [Introduction](#introduction)
+    - [Prerequisites](#prerequisites)
+    - [Provider: Rackspace](#provider-rackspace)
+    - [Build](#build)
+    - [Cluster](#cluster)
+    - [Some notes:](#some-notes)
+    - [Network Design](#network-design)
+
+## Introduction
 
 * Supported Version: v0.18.1
 

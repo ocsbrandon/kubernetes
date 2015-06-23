@@ -2,6 +2,24 @@
 
 Running kubernetes with Vagrant (and VirtualBox) is an easy way to run/test/develop on your local machine (Linux, Mac OS X).
 
+**Table of Contents**
+
+    - [Prerequisites](#prerequisites)
+    - [Setup](#setup)
+    - [Interacting with your Kubernetes cluster with Vagrant.](#interacting-with-your-kubernetes-cluster-with-vagrant)
+    - [Authenticating with your master](#authenticating-with-your-master)
+    - [Running containers](#running-containers)
+    - [Troubleshooting](#troubleshooting)
+        - [I keep downloading the same (large) box all the time!](#i-keep-downloading-the-same-large-box-all-the-time)
+        - [I just created the cluster, but I am getting authorization errors!](#i-just-created-the-cluster-but-i-am-getting-authorization-errors)
+        - [I just created the cluster, but I do not see my container running!](#i-just-created-the-cluster-but-i-do-not-see-my-container-running)
+        - [I want to make changes to Kubernetes code!](#i-want-to-make-changes-to-kubernetes-code)
+        - [I have brought Vagrant up but the nodes cannot validate!](#i-have-brought-vagrant-up-but-the-nodes-cannot-validate)
+        - [I want to change the number of nodes!](#i-want-to-change-the-number-of-nodes)
+        - [I want my VMs to have more memory!](#i-want-my-vms-to-have-more-memory)
+        - [I ran vagrant suspend and nothing works!](#i-ran-vagrant-suspend-and-nothing-works)
+
+
 ### Prerequisites
 1. Install latest version >= 1.6.2 of vagrant from http://www.vagrantup.com/downloads.html
 2. Install one of:
@@ -180,7 +198,7 @@ NAME                                   IMAGE(S)            HOST                 
 You need to wait for the provisioning to complete, you can monitor the nodes by doing:
 
 ```sh
-$ sudo salt '*minion-1' cmd.run 'docker images'
+$ vagrant ssh minion-1 -c 'sudo docker images'
 kubernetes-minion-1:
     REPOSITORY          TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
     <none>              <none>              96864a7d2df3        26 hours ago        204.4 MB
@@ -191,7 +209,7 @@ kubernetes-minion-1:
 Once the docker image for nginx has been downloaded, the container will start and you can list it:
 
 ```sh
-$ sudo salt '*minion-1' cmd.run 'docker ps'
+$ vagrant ssh minion-1 -c 'sudo docker ps'
 kubernetes-minion-1:
     CONTAINER ID        IMAGE                     COMMAND                CREATED             STATUS              PORTS                    NAMES
     dbe79bf6e25b        nginx:latest              "nginx"                21 seconds ago      Up 19 seconds                                k8s--mynginx.8c5b8a3a--7813c8bd_-_3ffe_-_11e4_-_9036_-_0800279696e1.etcd--7813c8bd_-_3ffe_-_11e4_-_9036_-_0800279696e1--fcfa837f

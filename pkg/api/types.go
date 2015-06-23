@@ -117,6 +117,10 @@ type ObjectMeta struct {
 	// resource or set of resources. Only servers will generate resource versions.
 	ResourceVersion string `json:"resourceVersion,omitempty"`
 
+	// A sequence number representing a specific generation of the desired state.
+	// Currently only implemented by replication controllers.
+	Generation int64 `json:"generation,omitempty"`
+
 	// CreationTimestamp is a timestamp representing the server time when this object was
 	// created. It is not guaranteed to be set in happens-before order across separate operations.
 	// Clients may not set this value. It is represented in RFC3339 form and is in UTC.
@@ -204,7 +208,7 @@ type VolumeSource struct {
 	// Glusterfs represents a Glusterfs mount on the host that shares a pod's lifetime
 	Glusterfs *GlusterfsVolumeSource `json:"glusterfs,omitempty"`
 	// PersistentVolumeClaimVolumeSource represents a reference to a PersistentVolumeClaim in the same namespace
-	PersistentVolumeClaimVolumeSource *PersistentVolumeClaimVolumeSource `json:"persistentVolumeClaim,omitempty"`
+	PersistentVolumeClaim *PersistentVolumeClaimVolumeSource `json:"persistentVolumeClaim,omitempty"`
 	// RBD represents a Rados Block Device mount on the host that shares a pod's lifetime
 	RBD *RBDVolumeSource `json:"rbd,omitempty"`
 }
@@ -882,9 +886,9 @@ type PodSpec struct {
 	// NodeSelector is a selector which must be true for the pod to fit on a node
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// ServiceAccount is the name of the ServiceAccount to use to run this pod
+	// ServiceAccountName is the name of the ServiceAccount to use to run this pod
 	// The pod will be allowed to use secrets referenced by the ServiceAccount
-	ServiceAccount string `json:"serviceAccount"`
+	ServiceAccountName string `json:"serviceAccountName"`
 
 	// NodeName is a request to schedule this pod onto a specific node.  If it is non-empty,
 	// the scheduler simply schedules this pod onto that node, assuming that it fits resource
@@ -907,6 +911,8 @@ type PodStatus struct {
 	Conditions []PodCondition `json:"conditions,omitempty"`
 	// A human readable message indicating details about why the pod is in this state.
 	Message string `json:"message,omitempty"`
+	// A brief CamelCase message indicating details about why the pod is in this state. e.g. 'OutOfDisk'
+	Reason string `json:"reason,omitempty" description:"(brief-CamelCase) reason indicating details about why the pod is in this condition"`
 
 	HostIP string `json:"hostIP,omitempty"`
 	PodIP  string `json:"podIP,omitempty"`
@@ -998,6 +1004,9 @@ type ReplicationControllerSpec struct {
 type ReplicationControllerStatus struct {
 	// Replicas is the number of actual replicas.
 	Replicas int `json:"replicas"`
+
+	// ObservedGeneration is the most recent generation observed by the controller.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // ReplicationController represents the configuration of a replication controller.

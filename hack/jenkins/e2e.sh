@@ -116,8 +116,15 @@ if [[ "${E2E_UP,,}" == "true" ]]; then
         export KUBE_SKIP_UPDATE=y
         sudo flock -x -n /var/run/lock/gcloud-components.lock -c "gcloud components update -q" || true
 
-        # For GKE, we can get the server-specified version.
-        if [[ ${JENKINS_USE_SERVER_VERSION:-} =~ ^[yY]$ ]]; then
+        if [[ ! -z ${JENKINS_EXPLICIT_VERSION:-} ]]; then
+            # Use an explicit pinned version like "ci/v0.10.0-101-g6c814c4" or
+            # "release/v0.19.1"
+            IFS='/' read -a varr <<< "${JENKINS_EXPLICIT_VERSION}"
+            bucket="${varr[0]}"
+            githash="${varr[1]}"
+            echo "$bucket / $githash"
+        elif [[ ${JENKINS_USE_SERVER_VERSION:-} =~ ^[yY]$ ]]; then
+            # For GKE, we can get the server-specified version.
             # We'll pull our TARs for tests from the release bucket.
             bucket="release"
 
@@ -127,8 +134,16 @@ if [[ "${E2E_UP,,}" == "true" ]]; then
             #       code=400,message=cluster.cluster_api_versionmustbeoneof:
             #       0.15.0,0.16.0.
             # The command should error, so we throw an || true on there.
-            msg=$(gcloud alpha container clusters create this-wont-work \
-                --zone=us-central1-f --cluster-api-version=0.0.0 2>&1 \
+            create_args=(
+              "this-wont-work"
+              "--zone=us-central1-f"
+            )
+            if [[ ! -z "${DOGFOOD_GCLOUD:-}" ]]; then
+              create_args+=("--cluster-version=0.0.0")
+            else
+              create_args+=("--cluster-api-version=0.0.0")
+            fi
+            msg=$(gcloud ${CMD_GROUP:-alpha} container clusters create "${create_args[@]}" 2>&1 \
                 | tr -d '[[:space:]]') || true
             # Strip out everything before the final colon, which gives us just
             # the allowed versions; something like "0.15.0,0.16.0." or "0.16.0."

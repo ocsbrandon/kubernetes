@@ -179,13 +179,13 @@ function get-kubeconfig-bearertoken() {
 function set_binary_version() {
   if [[ "${1}" == "latest_stable" ]]; then
     KUBE_VERSION=$(gsutil cat gs://kubernetes-release/release/stable.txt)
-    echo "Using latest stable version: ${KUBE_VERSION}"
+    echo "Using latest stable version: ${KUBE_VERSION}" >&2
   elif [[ "${1}" == "latest_release" ]]; then
     KUBE_VERSION=$(gsutil cat gs://kubernetes-release/release/latest.txt)
-    echo "Using latest release version: ${KUBE_VERSION}"
+    echo "Using latest release version: ${KUBE_VERSION}" >&2
   elif [[ "${1}" == "latest_ci" ]]; then
     KUBE_VERSION=$(gsutil cat gs://kubernetes-release/ci/latest.txt)
-    echo "Using latest ci version: ${KUBE_VERSION}"
+    echo "Using latest ci version: ${KUBE_VERSION}" >&2
   else
     KUBE_VERSION=${1}
   fi
@@ -199,7 +199,9 @@ function set_binary_version() {
 #   PROJECT
 # Vars set:
 #   SERVER_BINARY_TAR_URL
+#   SERVER_BINARY_TAR_HASH
 #   SALT_TAR_URL
+#   SALT_TAR_HASH
 function tars_from_version() {
   if [[ -z "${KUBE_VERSION-}" ]]; then
     find-release-tars
@@ -214,9 +216,19 @@ function tars_from_version() {
     echo "Version doesn't match regexp" >&2
     exit 1
   fi
+  until SERVER_BINARY_TAR_HASH=$(curl --fail --silent "${SERVER_BINARY_TAR_URL}.sha1"); do
+    echo "Failure trying to curl release .sha1"
+  done
+  until SALT_TAR_HASH=$(curl --fail --silent "${SALT_TAR_URL}.sha1"); do
+    echo "Failure trying to curl Salt tar .sha1"
+  done
 
-  if ! curl -Ss --range 0-1 ${SERVER_BINARY_TAR_URL} >&/dev/null; then
+  if ! curl -Ss --range 0-1 "${SERVER_BINARY_TAR_URL}" >&/dev/null; then
     echo "Can't find release at ${SERVER_BINARY_TAR_URL}" >&2
+    exit 1
+  fi
+  if ! curl -Ss --range 0-1 "${SALT_TAR_URL}" >&/dev/null; then
+    echo "Can't find Salt tar at ${SALT_TAR_URL}" >&2
     exit 1
   fi
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/endpoints"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
+	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/rest"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/endpoint"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/namespace"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/service"
@@ -75,10 +76,12 @@ func (c *Controller) Start() {
 
 	// run all of the controllers once prior to returning from Start.
 	if err := repairClusterIPs.RunOnce(); err != nil {
-		glog.Errorf("Unable to perform initial IP allocation check: %v", err)
+		// If we fail to repair cluster IPs apiserver is useless. We should restart and retry.
+		glog.Fatalf("Unable to perform initial IP allocation check: %v", err)
 	}
 	if err := repairNodePorts.RunOnce(); err != nil {
-		glog.Errorf("Unable to perform initial service nodePort check: %v", err)
+		// If we fail to repair node ports apiserver is useless. We should restart and retry.
+		glog.Fatalf("Unable to perform initial service nodePort check: %v", err)
 	}
 	if err := c.UpdateKubernetesService(); err != nil {
 		glog.Errorf("Unable to perform initial Kubernetes service initialization: %v", err)
@@ -157,8 +160,14 @@ func (c *Controller) CreateMasterServiceIfNeeded(serviceName string, serviceIP n
 			Selector:        nil,
 			ClusterIP:       serviceIP.String(),
 			SessionAffinity: api.ServiceAffinityNone,
+			Type:            api.ServiceTypeClusterIP,
 		},
 	}
+
+	if err := rest.BeforeCreate(rest.Services, ctx, svc); err != nil {
+		return err
+	}
+
 	_, err := c.ServiceRegistry.CreateService(ctx, svc)
 	if err != nil && errors.IsAlreadyExists(err) {
 		err = nil

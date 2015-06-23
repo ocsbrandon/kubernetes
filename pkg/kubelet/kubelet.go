@@ -114,6 +114,7 @@ func waitUntilRuntimeIsUp(cr kubecontainer.Runtime, timeout time.Duration) error
 // New creates a new Kubelet for use in main
 func NewMainKubelet(
 	hostname string,
+	nodeName string,
 	dockerClient dockertools.DockerInterface,
 	kubeClient client.Interface,
 	rootDirectory string,
@@ -179,7 +180,7 @@ func NewMainKubelet(
 	if kubeClient != nil {
 		// TODO: cache.NewListWatchFromClient is limited as it takes a client implementation rather
 		// than an interface. There is no way to construct a list+watcher using resource name.
-		fieldSelector := fields.Set{client.ObjectNameField: hostname}.AsSelector()
+		fieldSelector := fields.Set{client.ObjectNameField: nodeName}.AsSelector()
 		listWatch := &cache.ListWatch{
 			ListFunc: func() (runtime.Object, error) {
 				return kubeClient.Nodes().List(labels.Everything(), fieldSelector)
@@ -197,8 +198,8 @@ func NewMainKubelet(
 	// TODO: what is namespace for node?
 	nodeRef := &api.ObjectReference{
 		Kind:      "Node",
-		Name:      hostname,
-		UID:       types.UID(hostname),
+		Name:      nodeName,
+		UID:       types.UID(nodeName),
 		Namespace: "",
 	}
 
@@ -224,6 +225,7 @@ func NewMainKubelet(
 
 	klet := &Kubelet{
 		hostname:                       hostname,
+		nodeName:                       nodeName,
 		dockerClient:                   dockerClient,
 		kubeClient:                     kubeClient,
 		rootDirectory:                  rootDirectory,
@@ -260,6 +262,7 @@ func NewMainKubelet(
 		mounter:                        mounter,
 		configureCBR0:                  configureCBR0,
 		pods:                           pods,
+		syncLoopMonitor:                util.AtomicValue{},
 	}
 
 	if plug, err := network.InitNetworkPlugin(networkPlugins, networkPluginName, &networkHost{klet}); err != nil {
@@ -309,7 +312,7 @@ func NewMainKubelet(
 
 	// Setup container manager, can fail if the devices hierarchy is not mounted
 	// (it is required by Docker however).
-	containerManager, err := newContainerManager(dockerDaemonContainer, systemContainer, resourceContainer)
+	containerManager, err := newContainerManager(cadvisorInterface, dockerDaemonContainer, systemContainer, resourceContainer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the Container Manager: %v", err)
 	}
@@ -362,6 +365,7 @@ type nodeLister interface {
 // Kubelet is the main kubelet implementation.
 type Kubelet struct {
 	hostname       string
+	nodeName       string
 	dockerClient   dockertools.DockerInterface
 	runtimeCache   kubecontainer.RuntimeCache
 	kubeClient     client.Interface
@@ -488,6 +492,9 @@ type Kubelet struct {
 
 	// Number of Pods which can be run by this Kubelet
 	pods int
+
+	// Monitor Kubelet's sync loop
+	syncLoopMonitor util.AtomicValue
 }
 
 // getRootDir returns the full path to the directory under which kubelet can
@@ -637,13 +644,13 @@ func (kl *Kubelet) GetNode() (*api.Node, error) {
 	if err != nil {
 		return nil, errors.New("cannot list nodes")
 	}
-	host := kl.GetHostname()
+	nodeName := kl.nodeName
 	for _, n := range l.Items {
-		if n.Name == host {
+		if n.Name == nodeName {
 			return &n, nil
 		}
 	}
-	return nil, fmt.Errorf("node %v not found", host)
+	return nil, fmt.Errorf("node %v not found", nodeName)
 }
 
 // Starts garbage collection theads.
@@ -709,7 +716,7 @@ func (kl *Kubelet) Run(updates <-chan PodUpdate) {
 func (kl *Kubelet) initialNodeStatus() (*api.Node, error) {
 	node := &api.Node{
 		ObjectMeta: api.ObjectMeta{
-			Name:   kl.hostname,
+			Name:   kl.nodeName,
 			Labels: map[string]string{"kubernetes.io/hostname": kl.hostname},
 		},
 	}
@@ -718,18 +725,20 @@ func (kl *Kubelet) initialNodeStatus() (*api.Node, error) {
 		if !ok {
 			return nil, fmt.Errorf("failed to get instances from cloud provider")
 		}
+
 		// TODO(roberthbailey): Can we do this without having credentials to talk
 		// to the cloud provider?
 		// TODO: ExternalID is deprecated, we'll have to drop this code
-		externalID, err := instances.ExternalID(kl.hostname)
+		externalID, err := instances.ExternalID(kl.nodeName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get external ID from cloud provider: %v", err)
 		}
 		node.Spec.ExternalID = externalID
+
 		// TODO: We can't assume that the node has credentials to talk to the
 		// cloudprovider from arbitrary nodes. At most, we should talk to a
 		// local metadata server here.
-		node.Spec.ProviderID, err = cloudprovider.GetInstanceProviderID(kl.cloud, kl.hostname)
+		node.Spec.ProviderID, err = cloudprovider.GetInstanceProviderID(kl.cloud, kl.nodeName)
 		if err != nil {
 			return nil, err
 		}
@@ -760,13 +769,13 @@ func (kl *Kubelet) registerWithApiserver() {
 		glog.V(2).Infof("Attempting to register node %s", node.Name)
 		if _, err := kl.kubeClient.Nodes().Create(node); err != nil {
 			if apierrors.IsAlreadyExists(err) {
-				currentNode, err := kl.kubeClient.Nodes().Get(kl.hostname)
+				currentNode, err := kl.kubeClient.Nodes().Get(kl.nodeName)
 				if err != nil {
-					glog.Errorf("error getting node %q: %v", kl.hostname, err)
+					glog.Errorf("error getting node %q: %v", kl.nodeName, err)
 					continue
 				}
 				if currentNode == nil {
-					glog.Errorf("no node instance returned for %q", kl.hostname)
+					glog.Errorf("no node instance returned for %q", kl.nodeName)
 					continue
 				}
 				if currentNode.Spec.ExternalID == node.Spec.ExternalID {
@@ -1092,6 +1101,13 @@ func (kl *Kubelet) makePodDataDirs(pod *api.Pod) error {
 func (kl *Kubelet) syncPod(pod *api.Pod, mirrorPod *api.Pod, runningPod kubecontainer.Pod, updateType SyncPodType) error {
 	podFullName := kubecontainer.GetPodFullName(pod)
 	uid := pod.UID
+	start := time.Now()
+	var firstSeenTime time.Time
+	if firstSeenTimeStr, ok := pod.Annotations[ConfigFirstSeenAnnotationKey]; !ok {
+		glog.V(3).Infof("First seen time not recorded for pod %q", pod.UID)
+	} else {
+		firstSeenTime = kubeletTypes.ConvertToTimestamp(firstSeenTimeStr).Get()
+	}
 
 	// Before returning, regenerate status and store it in the cache.
 	defer func() {
@@ -1107,6 +1123,11 @@ func (kl *Kubelet) syncPod(pod *api.Pod, mirrorPod *api.Pod, runningPod kubecont
 			podToUpdate := pod
 			if mirrorPod != nil {
 				podToUpdate = mirrorPod
+			}
+			existingStatus, ok := kl.statusManager.GetPodStatus(podFullName)
+			if !ok || existingStatus.Phase == api.PodPending && status.Phase == api.PodRunning &&
+				!firstSeenTime.IsZero() {
+				metrics.PodStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
 			}
 			kl.statusManager.SetPodStatus(podToUpdate, status)
 		}
@@ -1164,8 +1185,16 @@ func (kl *Kubelet) syncPod(pod *api.Pod, mirrorPod *api.Pod, runningPod kubecont
 
 	var podStatus api.PodStatus
 	if updateType == SyncPodCreate {
+		// This is the first time we are syncing the pod. Record the latency
+		// since kubelet first saw the pod if firstSeenTime is set.
+		if !firstSeenTime.IsZero() {
+			metrics.PodWorkerStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
+		}
+
 		podStatus = pod.Status
-		glog.V(3).Infof("Not generating pod status for new pod %v", podFullName)
+		podStatus.StartTime = &util.Time{start}
+		kl.statusManager.SetPodStatus(pod, podStatus)
+		glog.V(3).Infof("Not generating pod status for new pod %q", podFullName)
 	} else {
 		var err error
 		podStatus, err = kl.generatePodStatus(pod)
@@ -1379,7 +1408,7 @@ func (kl *Kubelet) SyncPods(allPods []*api.Pod, podSyncTypes map[types.UID]SyncP
 
 		// Run the sync in an async manifest worker.
 		kl.podWorkers.UpdatePod(pod, mirrorPods[podFullName], func() {
-			metrics.SyncPodLatency.WithLabelValues(podSyncTypes[pod.UID].String()).Observe(metrics.SinceInMicroseconds(start))
+			metrics.PodWorkerLatency.WithLabelValues(podSyncTypes[pod.UID].String()).Observe(metrics.SinceInMicroseconds(start))
 		})
 
 		// Note the number of containers for new pods.
@@ -1559,9 +1588,11 @@ func (kl *Kubelet) handleOutOfDisk(pods []*api.Pod, podSyncTypes map[types.UID]S
 		pod := pods[i]
 		// Only reject pods that didn't start yet.
 		if podSyncTypes[pod.UID] == SyncPodCreate {
-			kl.recorder.Eventf(pod, "OutOfDisk", "Cannot start the pod due to lack of disk space.")
+			reason := "OutOfDisk"
+			kl.recorder.Eventf(pod, reason, "Cannot start the pod due to lack of disk space.")
 			kl.statusManager.SetPodStatus(pod, api.PodStatus{
 				Phase:   api.PodFailed,
+				Reason:  reason,
 				Message: "Pod cannot be started due to lack of disk space."})
 			continue
 		}
@@ -1596,23 +1627,29 @@ func (kl *Kubelet) checkNodeSelectorMatching(pods []*api.Pod) (fitting []*api.Po
 func (kl *Kubelet) handleNotFittingPods(pods []*api.Pod) []*api.Pod {
 	fitting, notFitting := checkHostPortConflicts(pods)
 	for _, pod := range notFitting {
-		kl.recorder.Eventf(pod, "hostPortConflict", "Cannot start the pod due to host port conflict.")
+		reason := "HostPortConflict"
+		kl.recorder.Eventf(pod, reason, "Cannot start the pod due to host port conflict.")
 		kl.statusManager.SetPodStatus(pod, api.PodStatus{
 			Phase:   api.PodFailed,
+			Reason:  reason,
 			Message: "Pod cannot be started due to host port conflict"})
 	}
 	fitting, notFitting = kl.checkNodeSelectorMatching(fitting)
 	for _, pod := range notFitting {
-		kl.recorder.Eventf(pod, "nodeSelectorMismatching", "Cannot start the pod due to node selector mismatch.")
+		reason := "NodeSelectorMismatching"
+		kl.recorder.Eventf(pod, reason, "Cannot start the pod due to node selector mismatch.")
 		kl.statusManager.SetPodStatus(pod, api.PodStatus{
 			Phase:   api.PodFailed,
+			Reason:  reason,
 			Message: "Pod cannot be started due to node selector mismatch"})
 	}
 	fitting, notFitting = kl.checkCapacityExceeded(fitting)
 	for _, pod := range notFitting {
-		kl.recorder.Eventf(pod, "capacityExceeded", "Cannot start the pod due to exceeded capacity.")
+		reason := "CapacityExceeded"
+		kl.recorder.Eventf(pod, reason, "Cannot start the pod due to exceeded capacity.")
 		kl.statusManager.SetPodStatus(pod, api.PodStatus{
 			Phase:   api.PodFailed,
+			Reason:  reason,
 			Message: "Pod cannot be started due to exceeded capacity"})
 	}
 	return fitting
@@ -1657,36 +1694,58 @@ func (kl *Kubelet) admitPods(allPods []*api.Pod, podSyncTypes map[types.UID]Sync
 func (kl *Kubelet) syncLoop(updates <-chan PodUpdate, handler SyncHandler) {
 	glog.Info("Starting kubelet main sync loop.")
 	for {
-		unsyncedPod := false
-		podSyncTypes := make(map[types.UID]SyncPodType)
+		kl.syncLoopIteration(updates, handler)
+	}
+}
+
+func (kl *Kubelet) syncLoopIteration(updates <-chan PodUpdate, handler SyncHandler) {
+	kl.syncLoopMonitor.Store(time.Now())
+	if !kl.containerRuntimeUp() {
+		time.Sleep(5 * time.Second)
+		glog.Infof("Skipping pod synchronization, container runtime is not up.")
+		return
+	}
+	unsyncedPod := false
+	podSyncTypes := make(map[types.UID]SyncPodType)
+	select {
+	case u, ok := <-updates:
+		if !ok {
+			glog.Errorf("Update channel is closed. Exiting the sync loop.")
+			return
+		}
+		kl.podManager.UpdatePods(u, podSyncTypes)
+		unsyncedPod = true
+		kl.syncLoopMonitor.Store(time.Now())
+	case <-time.After(kl.resyncInterval):
+		glog.V(4).Infof("Periodic sync")
+	}
+	start := time.Now()
+	// If we already caught some update, try to wait for some short time
+	// to possibly batch it with other incoming updates.
+	for unsyncedPod {
 		select {
-		case u, ok := <-updates:
-			if !ok {
-				glog.Errorf("Update channel is closed. Exiting the sync loop.")
-				return
-			}
+		case u := <-updates:
 			kl.podManager.UpdatePods(u, podSyncTypes)
-			unsyncedPod = true
-		case <-time.After(kl.resyncInterval):
-			glog.V(4).Infof("Periodic sync")
-		}
-		start := time.Now()
-		// If we already caught some update, try to wait for some short time
-		// to possibly batch it with other incoming updates.
-		for unsyncedPod {
-			select {
-			case u := <-updates:
-				kl.podManager.UpdatePods(u, podSyncTypes)
-			case <-time.After(5 * time.Millisecond):
-				// Break the for loop.
-				unsyncedPod = false
-			}
-		}
-		pods, mirrorPods := kl.podManager.GetPodsAndMirrorMap()
-		if err := handler.SyncPods(pods, podSyncTypes, mirrorPods, start); err != nil {
-			glog.Errorf("Couldn't sync containers: %v", err)
+			kl.syncLoopMonitor.Store(time.Now())
+		case <-time.After(5 * time.Millisecond):
+			// Break the for loop.
+			unsyncedPod = false
 		}
 	}
+	pods, mirrorPods := kl.podManager.GetPodsAndMirrorMap()
+	kl.syncLoopMonitor.Store(time.Now())
+	if err := handler.SyncPods(pods, podSyncTypes, mirrorPods, start); err != nil {
+		glog.Errorf("Couldn't sync containers: %v", err)
+	}
+	kl.syncLoopMonitor.Store(time.Now())
+}
+
+func (kl *Kubelet) LatestLoopEntryTime() time.Time {
+	val := kl.syncLoopMonitor.Load()
+	if val == nil {
+		return time.Time{}
+	}
+	return val.(time.Time)
 }
 
 // Returns the container runtime version for this Kubelet.
@@ -1824,10 +1883,10 @@ func (kl *Kubelet) updateNodeStatus() error {
 }
 
 func (kl *Kubelet) recordNodeStatusEvent(event string) {
-	glog.V(2).Infof("Recording %s event message for node %s", event, kl.hostname)
+	glog.V(2).Infof("Recording %s event message for node %s", event, kl.nodeName)
 	// TODO: This requires a transaction, either both node status is updated
 	// and event is recorded or neither should happen, see issue #6055.
-	kl.recorder.Eventf(kl.nodeRef, event, "Node %s status is now: %s", kl.hostname, event)
+	kl.recorder.Eventf(kl.nodeRef, event, "Node %s status is now: %s", kl.nodeName, event)
 }
 
 // Maintains Node.Spec.Unschedulable value from previous run of tryUpdateNodeStatus()
@@ -1844,7 +1903,8 @@ func (kl *Kubelet) setNodeStatus(node *api.Node) error {
 		}
 		// TODO(roberthbailey): Can we do this without having credentials to talk
 		// to the cloud provider?
-		nodeAddresses, err := instances.NodeAddresses(kl.hostname)
+		// TODO(justinsb): We can if CurrentNodeName() was actually CurrentNode() and returned an interface
+		nodeAddresses, err := instances.NodeAddresses(kl.nodeName)
 		if err != nil {
 			return fmt.Errorf("failed to get node address from cloud provider: %v", err)
 		}
@@ -1898,7 +1958,7 @@ func (kl *Kubelet) setNodeStatus(node *api.Node) error {
 			// TODO: This requires a transaction, either both node status is updated
 			// and event is recorded or neither should happen, see issue #6055.
 			kl.recorder.Eventf(kl.nodeRef, "rebooted",
-				"Node %s has been rebooted, boot id: %s", kl.hostname, info.BootID)
+				"Node %s has been rebooted, boot id: %s", kl.nodeName, info.BootID)
 		}
 		node.Status.NodeInfo.BootID = info.BootID
 	}
@@ -1917,11 +1977,7 @@ func (kl *Kubelet) setNodeStatus(node *api.Node) error {
 	}
 
 	// Check whether container runtime can be reported as up.
-	containerRuntimeUp := func() bool {
-		kl.runtimeMutex.Lock()
-		defer kl.runtimeMutex.Unlock()
-		return kl.lastTimestampRuntimeUp.Add(kl.runtimeUpThreshold).After(time.Now())
-	}()
+	containerRuntimeUp := kl.containerRuntimeUp()
 
 	currentTime := util.Now()
 	var newNodeReadyCondition api.NodeCondition
@@ -1984,15 +2040,21 @@ func (kl *Kubelet) setNodeStatus(node *api.Node) error {
 	return nil
 }
 
+func (kl *Kubelet) containerRuntimeUp() bool {
+	kl.runtimeMutex.Lock()
+	defer kl.runtimeMutex.Unlock()
+	return kl.lastTimestampRuntimeUp.Add(kl.runtimeUpThreshold).After(time.Now())
+}
+
 // tryUpdateNodeStatus tries to update node status to master. If ReconcileCBR0
 // is set, this function will also confirm that cbr0 is configured correctly.
 func (kl *Kubelet) tryUpdateNodeStatus() error {
-	node, err := kl.kubeClient.Nodes().Get(kl.hostname)
+	node, err := kl.kubeClient.Nodes().Get(kl.nodeName)
 	if err != nil {
-		return fmt.Errorf("error getting node %q: %v", kl.hostname, err)
+		return fmt.Errorf("error getting node %q: %v", kl.nodeName, err)
 	}
 	if node == nil {
-		return fmt.Errorf("no node instance returned for %q", kl.hostname)
+		return fmt.Errorf("no node instance returned for %q", kl.nodeName)
 	}
 	if err := kl.setNodeStatus(node); err != nil {
 		return err
@@ -2094,14 +2156,22 @@ func getPodReadyCondition(spec *api.PodSpec, statuses []api.ContainerStatus) []a
 // By passing the pod directly, this method avoids pod lookup, which requires
 // grabbing a lock.
 func (kl *Kubelet) generatePodStatus(pod *api.Pod) (api.PodStatus, error) {
+
+	start := time.Now()
+	defer func() {
+		metrics.PodStatusLatency.Observe(metrics.SinceInMicroseconds(start))
+	}()
+
 	podFullName := kubecontainer.GetPodFullName(pod)
 	glog.V(3).Infof("Generating status for %q", podFullName)
 
 	// TODO: Consider include the container information.
 	if kl.pastActiveDeadline(pod) {
-		kl.recorder.Eventf(pod, "deadline", "Pod was active on the node longer than specified deadline")
+		reason := "DeadlineExceeded"
+		kl.recorder.Eventf(pod, reason, "Pod was active on the node longer than specified deadline")
 		return api.PodStatus{
 			Phase:   api.PodFailed,
+			Reason:  reason,
 			Message: "Pod was active on the node longer than specified deadline"}, nil
 	}
 
@@ -2114,13 +2184,14 @@ func (kl *Kubelet) generatePodStatus(pod *api.Pod) (api.PodStatus, error) {
 		if strings.Contains(err.Error(), "resource temporarily unavailable") {
 			// Leave upstream layer to decide what to do
 			return api.PodStatus{}, err
-		} else {
-			pendingStatus := api.PodStatus{
-				Phase:   api.PodPending,
-				Message: fmt.Sprintf("Query container info failed with error (%v)", err),
-			}
-			return pendingStatus, nil
 		}
+
+		pendingStatus := api.PodStatus{
+			Phase:   api.PodPending,
+			Reason:  "GeneralError",
+			Message: fmt.Sprintf("Query container info failed with error (%v)", err),
+		}
+		return pendingStatus, nil
 	}
 
 	// Assume info is ready to process
@@ -2143,6 +2214,9 @@ func (kl *Kubelet) generatePodStatus(pod *api.Pod) (api.PodStatus, error) {
 			glog.V(4).Infof("Cannot get host IP: %v", err)
 		} else {
 			podStatus.HostIP = hostIP.String()
+			if pod.Spec.HostNetwork && podStatus.PodIP == "" {
+				podStatus.PodIP = hostIP.String()
+			}
 		}
 	}
 
@@ -2205,6 +2279,9 @@ func (kl *Kubelet) PortForward(podFullName string, podUID types.UID, port uint16
 		return err
 	}
 	pod := kubecontainer.Pods(pods).FindPod(podFullName, podUID)
+	if pod.IsEmpty() {
+		return fmt.Errorf("pod not found (%q)", podFullName)
+	}
 	return kl.runner.PortForward(&pod, port, stream)
 }
 
@@ -2216,6 +2293,10 @@ func (kl *Kubelet) BirthCry() {
 
 func (kl *Kubelet) StreamingConnectionIdleTimeout() time.Duration {
 	return kl.streamingConnectionIdleTimeout
+}
+
+func (kl *Kubelet) ResyncInterval() time.Duration {
+	return kl.resyncInterval
 }
 
 // GetContainerInfo returns stats (from Cadvisor) for a container.

@@ -16,7 +16,7 @@ This is a somewhat long tutorial.  If you want to jump straight to the "do it no
 In Kubernetes, the atomic unit of an application is a [_Pod_](../../docs/pods.md).  A Pod is one or more containers that _must_ be scheduled onto the same host.  All containers in a pod share a network namespace, and may optionally share mounted volumes.  In this simple case, we define a single container running Cassandra for our pod:
 
 ```yaml
-apiVersion: v1beta3
+apiVersion: v1
 kind: Pod
 metadata:
   labels:
@@ -28,8 +28,8 @@ spec:
     - /run.sh
     resources:
       limits:
-        cpu: "1"
-    image: gcr.io/google_containers/cassandra:v3
+        cpu: "0.5"
+    image: gcr.io/google_containers/cassandra:v4
     name: cassandra
     ports:
     - name: cql
@@ -44,8 +44,6 @@ spec:
       value: 512M
     - name: HEAP_NEWSIZE
       value: 100M
-    - name: KUBERNETES_API_PROTOCOL
-      value: http
   volumes:
     - name: data
       emptyDir: {}
@@ -53,7 +51,7 @@ spec:
 
 There are a few things to note in this description.  First is that we are running the ```kubernetes/cassandra``` image.  This is a standard Cassandra installation on top of Debian.  However it also adds a custom [```SeedProvider```](https://svn.apache.org/repos/asf/cassandra/trunk/src/java/org/apache/cassandra/locator/SeedProvider.java) to Cassandra.  In Cassandra, a ```SeedProvider``` bootstraps the gossip protocol that Cassandra uses to find other nodes.  The ```KubernetesSeedProvider``` discovers the Kubernetes API Server using the built in Kubernetes discovery service, and then uses the Kubernetes API to find new nodes (more on this later)
 
-You may also note that we are setting some Cassandra parameters (```MAX_HEAP_SIZE``` and ```HEAP_NEWSIZE```).  We also tell Kubernetes that the container exposes both the ```CQL``` and ```Thrift``` API ports.  Finally, we tell the cluster manager that we need 1 cpu (1 core).
+You may also note that we are setting some Cassandra parameters (```MAX_HEAP_SIZE``` and ```HEAP_NEWSIZE```).  We also tell Kubernetes that the container exposes both the ```CQL``` and ```Thrift``` API ports.  Finally, we tell the cluster manager that we need 0.5 cpu (0.5 core).
 
 Given this configuration, we can create the pod from a file specification as follows
 
@@ -65,9 +63,8 @@ After a few moments, you should be able to see the pod running, plus its single 
 
 ```sh
 $ kubectl get pods cassandra
-POD         IP           CONTAINER(S)   IMAGE(S)                  HOST                                    LABELS           STATUS    CREATED      MESSAGE
-cassandra   10.244.3.3                                            kubernetes-minion-sft2/104.197.42.181   name=cassandra   Running   21 seconds
-                         cassandra      gcr.io/google_containers/cassandra:v3                                                            Running   3 seconds
+NAME        READY     REASON    RESTARTS   AGE
+cassandra   1/1       Running   0          55s
 ```
 
 
@@ -76,7 +73,7 @@ In Kubernetes a _[Service](../../docs/services.md)_ describes a set of Pods that
 
 Here is the service description:
 ```yaml
-apiVersion: v1beta3
+apiVersion: v1
 kind: Service
 metadata:
   labels:
@@ -85,7 +82,6 @@ metadata:
 spec:
   ports:
     - port: 9042
-      targetPort: 9042
   selector:
     name: cassandra
 ```
@@ -100,28 +96,29 @@ $ kubectl create -f cassandra-service.yaml
 Once the service is created, you can query it's endpoints:
 ```sh
 $ kubectl get endpoints cassandra -o yaml
-apiVersion: v1beta3
+apiVersion: v1
 kind: Endpoints
 metadata:
-  creationTimestamp: 2015-04-23T17:21:27Z
+  creationTimestamp: 2015-06-21T22:34:12Z
+  labels:
+    name: cassandra
   name: cassandra
   namespace: default
-  resourceVersion: "857"
-  selfLink: /api/v1beta3/namespaces/default/endpoints/cassandra
-  uid: 2c7d36bf-e9dd-11e4-a7ed-42010af011dd
+  resourceVersion: "944373"
+  selfLink: /api/v1/namespaces/default/endpoints/cassandra
+  uid: a3d6c25f-1865-11e5-a34e-42010af01bcc
 subsets:
 - addresses:
-  - IP: 10.244.3.3
+  - ip: 10.244.3.15
     targetRef:
       kind: Pod
       name: cassandra
       namespace: default
-      resourceVersion: "769"
-      uid: d185872c-e9dc-11e4-a7ed-42010af011dd
+      resourceVersion: "944372"
+      uid: 9ef9895d-1865-11e5-a34e-42010af01bcc
   ports:
   - port: 9042
     protocol: TCP
-
 ```
 
 You can see that the _Service_ has found the pod we created in step one.
@@ -131,10 +128,10 @@ Of course, a single node cluster isn't particularly interesting.  The real power
 
 In Kubernetes a _[Replication Controller](../../docs/replication-controller.md)_ is responsible for replicating sets of identical pods.  Like a _Service_ it has a selector query which identifies the members of it's set.  Unlike a _Service_ it also has a desired number of replicas, and it will create or delete _Pods_ to ensure that the number of _Pods_ matches up with it's desired state.
 
-Replication Controllers will "adopt" existing pods that match their selector query, so let's create a Replication Controller with a single replica to adopt our existing Cassandra Pod.
+Replication controllers will "adopt" existing pods that match their selector query, so let's create a replication controller with a single replica to adopt our existing Cassandra pod.
 
 ```yaml
-apiVersion: v1beta3
+apiVersion: v1
 kind: ReplicationController
 metadata:
   labels:
@@ -154,15 +151,13 @@ spec:
             - /run.sh
           resources:
             limits:
-              cpu: 1
+              cpu: 0.5
           env:
             - name: MAX_HEAP_SIZE
-              key: MAX_HEAP_SIZE
               value: 512M
             - name: HEAP_NEWSIZE
-              key: HEAP_NEWSIZE
               value: 100M
-          image: "gcr.io/google_containers/cassandra:v3"
+          image: gcr.io/google_containers/cassandra:v4
           name: cassandra
           ports:
             - containerPort: 9042
@@ -177,7 +172,7 @@ spec:
           emptyDir: {}
 ```
 
-The bulk of the replication controller config is actually identical to the Cassandra pod declaration above, it simply gives the controller a recipe to use when creating new pods.  The other parts are the ```replicaSelector``` which contains the controller's selector query, and the ```replicas``` parameter which specifies the desired number of replicas, in this case 1.
+Most of this replication controller definition is identical to the Cassandra pod definition above, it simply gives the resplication controller a recipe to use when it creates new Cassandra pods.  The other differentiating parts are the ```selector``` attribute which contains the controller's selector query, and the ```replicas``` attribute which specifies the desired number of replicas, in this case 1.
 
 Create this controller:
 
@@ -196,13 +191,9 @@ Now if you list the pods in your cluster, and filter to the label ```name=cassan
 
 ```sh
 $ kubectl get pods -l="name=cassandra"
-
-POD                 IP              CONTAINER(S)   IMAGE(S)                 HOST                                    LABELS           STATUS    CREATED      MESSAGE
-cassandra           10.244.3.3                                              kubernetes-minion-sft2/104.197.42.181   name=cassandra   Running   7 minutes
-                                    cassandra      gcr.io/google_containers/cassandra:v3                                                           Running   7 minutes
-cassandra-gnhk8     10.244.0.5                                              kubernetes-minion-dqz3/104.197.2.71     name=cassandra   Running   About a minute
-                                    cassandra      gcr.io/google_containers/cassandra:v3                                                           Running   51 seconds
-
+NAME              READY     REASON    RESTARTS   AGE
+cassandra         1/1       Running   0          3m
+cassandra-af6h5   1/1       Running   0          28s
 ```
 
 Notice that one of the pods has the human readable name ```cassandra``` that you specified in your config before, and one has a random string, since it was named by the replication controller.

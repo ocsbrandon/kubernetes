@@ -35,6 +35,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/record"
 	kubecontainer "github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/container"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/lifecycle"
+	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/metrics"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/network"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/prober"
 	kubeletTypes "github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/types"
@@ -473,15 +474,6 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 	return &podStatus, nil
 }
 
-func (dm *DockerManager) GetPodInfraContainer(pod kubecontainer.Pod) (kubecontainer.Container, error) {
-	for _, container := range pod.Containers {
-		if container.Name == PodInfraContainerName {
-			return *container, nil
-		}
-	}
-	return kubecontainer.Container{}, fmt.Errorf("unable to find pod infra container for pod %v", pod.ID)
-}
-
 // makeEnvList converts EnvVar list to a list of strings, in the form of
 // '<key>=<value>', which can be understood by docker.
 func makeEnvList(envs []kubecontainer.EnvVar) (result []string) {
@@ -722,6 +714,10 @@ func (dm *DockerManager) GetContainers(all bool) ([]*kubecontainer.Container, er
 }
 
 func (dm *DockerManager) GetPods(all bool) ([]*kubecontainer.Pod, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ContainerManagerLatency.WithLabelValues("GetPods").Observe(metrics.SinceInMicroseconds(start))
+	}()
 	pods := make(map[types.UID]*kubecontainer.Pod)
 	var result []*kubecontainer.Pod
 
@@ -1001,6 +997,10 @@ func (dm *DockerManager) ExecInContainer(containerId string, cmd []string, stdin
 	return dm.execHandler.ExecInContainer(dm.client, container, cmd, stdin, stdout, stderr, tty)
 }
 
+func noPodInfraContainerError(podName, podNamespace string) error {
+	return fmt.Errorf("cannot find pod infra container in pod %q", kubecontainer.BuildPodFullName(podName, podNamespace))
+}
+
 // PortForward executes socat in the pod's network namespace and copies
 // data between stream (representing the user's local connection on their
 // computer) and the specified port in the container.
@@ -1012,7 +1012,7 @@ func (dm *DockerManager) ExecInContainer(containerId string, cmd []string, stdin
 func (dm *DockerManager) PortForward(pod *kubecontainer.Pod, port uint16, stream io.ReadWriteCloser) error {
 	podInfraContainer := pod.FindContainerByName(PodInfraContainerName)
 	if podInfraContainer == nil {
-		return fmt.Errorf("cannot find pod infra container in pod %q", kubecontainer.BuildPodFullName(pod.Name, pod.Namespace))
+		return noPodInfraContainerError(pod.Name, pod.Namespace)
 	}
 	container, err := dm.client.InspectContainer(string(podInfraContainer.ID))
 	if err != nil {
@@ -1159,6 +1159,11 @@ func (dm *DockerManager) killContainer(containerID types.UID) error {
 
 // Run a single container from a pod. Returns the docker container ID
 func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Container, netMode, ipcMode string) (kubeletTypes.DockerID, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ContainerManagerLatency.WithLabelValues("runContainerInPod").Observe(metrics.SinceInMicroseconds(start))
+	}()
+
 	ref, err := kubecontainer.GenerateContainerRef(pod, container)
 	if err != nil {
 		glog.Errorf("Couldn't make a ref to pod %v, container %v: '%v'", pod.Name, container.Name, err)
@@ -1224,6 +1229,10 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 
 // createPodInfraContainer starts the pod infra container for a pod. Returns the docker container ID of the newly created container.
 func (dm *DockerManager) createPodInfraContainer(pod *api.Pod) (kubeletTypes.DockerID, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ContainerManagerLatency.WithLabelValues("createPodInfraContainer").Observe(metrics.SinceInMicroseconds(start))
+	}()
 	// Use host networking if specified.
 	netNamespace := ""
 	var ports []api.ContainerPort
@@ -1263,9 +1272,12 @@ func (dm *DockerManager) createPodInfraContainer(pod *api.Pod) (kubeletTypes.Doc
 			}
 			return "", err
 		}
+		if ref != nil {
+			dm.recorder.Eventf(ref, "pulled", "Successfully pulled Pod container image %q", container.Image)
+		}
 	}
-	if ref != nil {
-		dm.recorder.Eventf(ref, "pulled", "Successfully pulled image %q", container.Image)
+	if ok && ref != nil {
+		dm.recorder.Eventf(ref, "pulled", "Pod container image %q already present on machine", container.Image)
 	}
 
 	id, err := dm.runContainerInPod(pod, container, netNamespace, "")
@@ -1296,6 +1308,11 @@ type PodContainerChangesSpec struct {
 }
 
 func (dm *DockerManager) computePodContainerChanges(pod *api.Pod, runningPod kubecontainer.Pod, podStatus api.PodStatus) (PodContainerChangesSpec, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ContainerManagerLatency.WithLabelValues("computePodContainerChanges").Observe(metrics.SinceInMicroseconds(start))
+	}()
+
 	podFullName := kubecontainer.GetPodFullName(pod)
 	uid := pod.UID
 	glog.V(4).Infof("Syncing Pod %+v, podFullName: %q, uid: %q", pod, podFullName, uid)
@@ -1442,6 +1459,11 @@ func (dm *DockerManager) pullImage(pod *api.Pod, container *api.Container, pullS
 
 // Sync the running pod to match the specified desired pod.
 func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus api.PodStatus, pullSecrets []api.Secret) error {
+	start := time.Now()
+	defer func() {
+		metrics.ContainerManagerLatency.WithLabelValues("SyncPod").Observe(metrics.SinceInMicroseconds(start))
+	}()
+
 	podFullName := kubecontainer.GetPodFullName(pod)
 	containerChanges, err := dm.computePodContainerChanges(pod, runningPod, podStatus)
 	glog.V(3).Infof("Got container changes for pod %q: %+v", podFullName, containerChanges)
@@ -1494,7 +1516,7 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 	// Start everything
 	for idx := range containerChanges.ContainersToStart {
 		container := &pod.Spec.Containers[idx]
-		glog.V(4).Infof("Creating container %+v", container)
+		glog.V(4).Infof("Creating container %+v in pod %v", container, podFullName)
 		err := dm.pullImage(pod, container, pullSecrets)
 		dm.updateReasonCache(pod, container, err)
 		if err != nil {

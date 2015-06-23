@@ -18,13 +18,14 @@ package master
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
 	rt "runtime"
 	"strconv"
 	"strings"
@@ -117,7 +118,7 @@ type Config struct {
 	RestfulContainer *restful.Container
 
 	// If specified, requests will be allocated a random timeout between this value, and twice this value.
-	// Note that it is up to the request handlers to ignore or honor this timeout.
+	// Note that it is up to the request handlers to ignore or honor this timeout. In seconds.
 	MinRequestTimeout int
 
 	// Number of masters running; all masters must be started with the
@@ -163,10 +164,11 @@ type Master struct {
 	serviceClusterIPRange *net.IPNet
 	serviceNodePortRange  util.PortRange
 	cacheTimeout          time.Duration
+	minRequestTimeout     time.Duration
 
 	mux                   apiserver.Mux
 	muxHelper             *apiserver.MuxHelper
-	handlerContainer      *apiserver.RestContainer
+	handlerContainer      *restful.Container
 	rootWebService        *restful.WebService
 	enableCoreControllers bool
 	enableLogsSupport     bool
@@ -210,6 +212,7 @@ type Master struct {
 	InsecureHandler http.Handler
 
 	// Used for secure proxy
+	dialer        apiserver.ProxyDialerFunc
 	tunnels       *util.SSHTunnelList
 	tunnelsLock   sync.Mutex
 	installSSHKey InstallSSHKey
@@ -333,7 +336,8 @@ func New(c *Config) *Master {
 		v1:                    !c.DisableV1,
 		requestContextMapper:  c.RequestContextMapper,
 
-		cacheTimeout: c.CacheTimeout,
+		cacheTimeout:      c.CacheTimeout,
+		minRequestTimeout: time.Duration(c.MinRequestTimeout) * time.Second,
 
 		masterCount:         c.MasterCount,
 		externalHost:        c.ExternalHost,
@@ -355,7 +359,7 @@ func New(c *Config) *Master {
 		m.mux = mux
 		handlerContainer = NewHandlerContainer(mux)
 	}
-	m.handlerContainer = &apiserver.RestContainer{handlerContainer, c.MinRequestTimeout}
+	m.handlerContainer = handlerContainer
 	// Use CurlyRouter to be able to use regular expressions in paths. Regular expressions are required in paths for example for proxy (where the path is proxy/{kind}/{name}/{*})
 	m.handlerContainer.Router(restful.CurlyRouter{})
 	m.muxHelper = &apiserver.MuxHelper{m.mux, []string{}}
@@ -493,27 +497,36 @@ func (m *Master) init(c *Config) {
 		"componentStatuses": componentstatus.NewStorage(func() map[string]apiserver.Server { return m.getServersToValidate(c) }),
 	}
 
-	var proxyDialer func(net, addr string) (net.Conn, error)
+	// establish the node proxy dialer
 	if len(c.SSHUser) > 0 {
+		// Usernames are capped @ 32
+		if len(c.SSHUser) > 32 {
+			glog.Warning("SSH User is too long, truncating to 32 chars")
+			c.SSHUser = c.SSHUser[0:32]
+		}
 		glog.Infof("Setting up proxy: %s %s", c.SSHUser, c.SSHKeyfile)
-		exists, err := util.FileExists(c.SSHKeyfile)
+
+		// public keyfile is written last, so check for that.
+		publicKeyFile := c.SSHKeyfile + ".pub"
+		exists, err := util.FileExists(publicKeyFile)
 		if err != nil {
 			glog.Errorf("Error detecting if key exists: %v", err)
 		} else if !exists {
 			glog.Infof("Key doesn't exist, attempting to create")
-			err := m.generateSSHKey(c.SSHUser, c.SSHKeyfile)
+			err := m.generateSSHKey(c.SSHUser, c.SSHKeyfile, publicKeyFile)
 			if err != nil {
 				glog.Errorf("Failed to create key pair: %v", err)
 			}
 		}
-		m.setupSecureProxy(c.SSHUser, c.SSHKeyfile)
-		proxyDialer = m.Dial
+		m.tunnels = &util.SSHTunnelList{}
+		m.dialer = m.Dial
+		m.setupSecureProxy(c.SSHUser, c.SSHKeyfile, publicKeyFile)
 
 		// This is pretty ugly.  A better solution would be to pull this all the way up into the
 		// server.go file.
 		httpKubeletClient, ok := c.KubeletClient.(*client.HTTPKubeletClient)
 		if ok {
-			httpKubeletClient.Config.Dial = m.Dial
+			httpKubeletClient.Config.Dial = m.dialer
 			transport, err := client.MakeTransport(httpKubeletClient.Config)
 			if err != nil {
 				glog.Errorf("Error setting up transport over SSH: %v", err)
@@ -527,29 +540,29 @@ func (m *Master) init(c *Config) {
 
 	apiVersions := []string{}
 	if m.v1beta3 {
-		if err := m.api_v1beta3().InstallREST(m.handlerContainer, proxyDialer); err != nil {
+		if err := m.api_v1beta3().InstallREST(m.handlerContainer); err != nil {
 			glog.Fatalf("Unable to setup API v1beta3: %v", err)
 		}
 		apiVersions = append(apiVersions, "v1beta3")
 	}
 	if m.v1 {
-		if err := m.api_v1().InstallREST(m.handlerContainer, proxyDialer); err != nil {
+		if err := m.api_v1().InstallREST(m.handlerContainer); err != nil {
 			glog.Fatalf("Unable to setup API v1: %v", err)
 		}
 		apiVersions = append(apiVersions, "v1")
 	}
 
 	apiserver.InstallSupport(m.muxHelper, m.rootWebService)
-	apiserver.AddApiWebService(m.handlerContainer.Container, c.APIPrefix, apiVersions)
+	apiserver.AddApiWebService(m.handlerContainer, c.APIPrefix, apiVersions)
 	defaultVersion := m.defaultAPIGroupVersion()
 	requestInfoResolver := &apiserver.APIRequestInfoResolver{util.NewStringSet(strings.TrimPrefix(defaultVersion.Root, "/")), defaultVersion.Mapper}
-	apiserver.InstallServiceErrorHandler(m.handlerContainer.Container, requestInfoResolver, apiVersions)
+	apiserver.InstallServiceErrorHandler(m.handlerContainer, requestInfoResolver, apiVersions)
 
 	// Register root handler.
 	// We do not register this using restful Webservice since we do not want to surface this in api docs.
 	// Allow master to be embedded in contexts which already have something registered at the root
 	if c.EnableIndex {
-		m.mux.HandleFunc("/", apiserver.IndexHandler(m.handlerContainer.Container, m.muxHelper))
+		m.mux.HandleFunc("/", apiserver.IndexHandler(m.handlerContainer, m.muxHelper))
 	}
 
 	if c.EnableLogsSupport {
@@ -674,7 +687,7 @@ func (m *Master) InstallSwaggerAPI() {
 		SwaggerPath:     "/swaggerui/",
 		SwaggerFilePath: "/swagger-ui/",
 	}
-	swagger.RegisterSwaggerService(swaggerConfig, m.handlerContainer.Container)
+	swagger.RegisterSwaggerService(swaggerConfig, m.handlerContainer)
 }
 
 func (m *Master) getServersToValidate(c *Config) map[string]apiserver.Server {
@@ -720,6 +733,9 @@ func (m *Master) defaultAPIGroupVersion() *apiserver.APIGroupVersion {
 
 		Admit:   m.admissionControl,
 		Context: m.requestContextMapper,
+
+		ProxyDialerFn:     m.dialer,
+		MinRequestTimeout: m.minRequestTimeout,
 	}
 }
 
@@ -766,9 +782,23 @@ func findExternalAddress(node *api.Node) (string, error) {
 }
 
 func (m *Master) Dial(net, addr string) (net.Conn, error) {
-	m.tunnelsLock.Lock()
-	defer m.tunnelsLock.Unlock()
-	return m.tunnels.Dial(net, addr)
+	// Only lock while picking a tunnel.
+	tunnel, err := func() (util.SSHTunnelEntry, error) {
+		m.tunnelsLock.Lock()
+		defer m.tunnelsLock.Unlock()
+		return m.tunnels.PickRandomTunnel()
+	}()
+	if err != nil {
+		return nil, err
+	}
+
+	start := time.Now()
+	id := rand.Int63() // So you can match begins/ends in the log.
+	glog.V(3).Infof("[%x: %v] Dialing...", id, tunnel.Address)
+	defer func() {
+		glog.V(3).Infof("[%x: %v] Dialed in %v.", id, tunnel.Address, time.Now().Sub(start))
+	}()
+	return tunnel.Tunnel.Dial(net, addr)
 }
 
 func (m *Master) needToReplaceTunnels(addrs []string) bool {
@@ -803,10 +833,7 @@ func (m *Master) getNodeAddresses() ([]string, error) {
 
 func (m *Master) replaceTunnels(user, keyfile string, newAddrs []string) error {
 	glog.Infof("replacing tunnels. New addrs: %v", newAddrs)
-	tunnels, err := util.MakeSSHTunnels(user, keyfile, newAddrs)
-	if err != nil {
-		return err
-	}
+	tunnels := util.MakeSSHTunnels(user, keyfile, newAddrs)
 	if err := tunnels.Open(); err != nil {
 		return err
 	}
@@ -843,11 +870,31 @@ func (m *Master) refreshTunnels(user, keyfile string) error {
 	return m.replaceTunnels(user, keyfile, addrs)
 }
 
-func (m *Master) setupSecureProxy(user, keyfile string) {
+func (m *Master) setupSecureProxy(user, privateKeyfile, publicKeyfile string) {
+	// Sync loop to ensure that the SSH key has been installed.
+	go util.Until(func() {
+		if m.installSSHKey == nil {
+			glog.Error("Won't attempt to install ssh key: installSSHKey function is nil")
+			return
+		}
+		key, err := util.ParsePublicKeyFromFile(publicKeyfile)
+		if err != nil {
+			glog.Errorf("Failed to load public key: %v", err)
+			return
+		}
+		keyData, err := util.EncodeSSHKey(key)
+		if err != nil {
+			glog.Errorf("Failed to encode public key: %v", err)
+			return
+		}
+		if err := m.installSSHKey(user, keyData); err != nil {
+			glog.Errorf("Failed to install ssh key: %v", err)
+		}
+	}, 5*time.Minute, util.NeverStop)
 	// Sync loop for tunnels
 	// TODO: switch this to watch.
 	go util.Until(func() {
-		if err := m.loadTunnels(user, keyfile); err != nil {
+		if err := m.loadTunnels(user, privateKeyfile); err != nil {
 			glog.Errorf("Failed to load SSH Tunnels: %v", err)
 		}
 		if m.tunnels != nil && m.tunnels.Len() != 0 {
@@ -860,27 +907,37 @@ func (m *Master) setupSecureProxy(user, keyfile string) {
 	// TODO: could make this more controller-ish
 	go util.Until(func() {
 		time.Sleep(5 * time.Minute)
-		if err := m.refreshTunnels(user, keyfile); err != nil {
+		if err := m.refreshTunnels(user, privateKeyfile); err != nil {
 			glog.Errorf("Failed to refresh SSH Tunnels: %v", err)
 		}
 	}, 0*time.Second, util.NeverStop)
 }
 
-func (m *Master) generateSSHKey(user, keyfile string) error {
-	if m.installSSHKey == nil {
-		return errors.New("ssh install function is null")
-	}
-
+func (m *Master) generateSSHKey(user, privateKeyfile, publicKeyfile string) error {
 	private, public, err := util.GenerateKey(2048)
 	if err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(keyfile, util.EncodePrivateKey(private), 0600); err != nil {
+	// If private keyfile already exists, we must have only made it halfway
+	// through last time, so delete it.
+	exists, err := util.FileExists(privateKeyfile)
+	if err != nil {
+		glog.Errorf("Error detecting if private key exists: %v", err)
+	} else if exists {
+		glog.Infof("Private key exists, but public key does not")
+		if err := os.Remove(privateKeyfile); err != nil {
+			glog.Errorf("Failed to remove stale private key: %v", err)
+		}
+	}
+	if err := ioutil.WriteFile(privateKeyfile, util.EncodePrivateKey(private), 0600); err != nil {
 		return err
 	}
-	data, err := util.EncodeSSHKey(public)
+	publicKeyBytes, err := util.EncodePublicKey(public)
 	if err != nil {
 		return err
 	}
-	return m.installSSHKey(user, data)
+	if err := ioutil.WriteFile(publicKeyfile+".tmp", publicKeyBytes, 0600); err != nil {
+		return err
+	}
+	return os.Rename(publicKeyfile+".tmp", publicKeyfile)
 }

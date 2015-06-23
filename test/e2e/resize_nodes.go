@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
+	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
@@ -34,7 +35,9 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func resizeNodeInstanceGroup(size int) error {
+const serveHostnameImage = "gcr.io/google_containers/serve_hostname:1.1"
+
+func resizeGroup(size int) error {
 	// TODO: make this hit the compute API directly instread of shelling out to gcloud.
 	output, err := exec.Command("gcloud", "preview", "managed-instance-groups", "--project="+testContext.CloudConfig.ProjectID, "--zone="+testContext.CloudConfig.Zone,
 		"resize", testContext.CloudConfig.NodeInstanceGroup, fmt.Sprintf("--new-size=%v", size)).CombinedOutput()
@@ -44,7 +47,7 @@ func resizeNodeInstanceGroup(size int) error {
 	return err
 }
 
-func nodeInstanceGroupSize() (int, error) {
+func groupSize() (int, error) {
 	// TODO: make this hit the compute API directly instread of shelling out to gcloud.
 	output, err := exec.Command("gcloud", "preview", "managed-instance-groups", "--project="+testContext.CloudConfig.ProjectID,
 		"--zone="+testContext.CloudConfig.Zone, "describe", testContext.CloudConfig.NodeInstanceGroup).CombinedOutput()
@@ -69,9 +72,9 @@ func nodeInstanceGroupSize() (int, error) {
 	return currentSize, nil
 }
 
-func waitForNodeInstanceGroupSize(size int) error {
+func waitForGroupSize(size int) error {
 	for start := time.Now(); time.Since(start) < 4*time.Minute; time.Sleep(5 * time.Second) {
-		currentSize, err := nodeInstanceGroupSize()
+		currentSize, err := groupSize()
 		if err != nil {
 			Logf("Failed to get node instance group size: %v", err)
 			continue
@@ -102,7 +105,7 @@ func waitForClusterSize(c *client.Client, size int) error {
 	return fmt.Errorf("timeout waiting for cluster size to be %d", size)
 }
 
-func newServiceWithNameSelector(name string) *api.Service {
+func svcByName(name string) *api.Service {
 	return &api.Service{
 		ObjectMeta: api.ObjectMeta{
 			Name: "test-service",
@@ -119,13 +122,66 @@ func newServiceWithNameSelector(name string) *api.Service {
 	}
 }
 
-func createServiceWithNameSelector(c *client.Client, ns, name string) error {
-	_, err := c.Services(ns).Create(newServiceWithNameSelector(name))
+func newSVCByName(c *client.Client, ns, name string) error {
+	_, err := c.Services(ns).Create(svcByName(name))
 	return err
 }
 
-func newReplicationControllerWithNameSelector(name string, replicas int, image string) *api.ReplicationController {
+func podOnNode(podName, nodeName string, image string) *api.Pod {
+	return &api.Pod{
+		ObjectMeta: api.ObjectMeta{
+			Name: podName,
+			Labels: map[string]string{
+				"name": podName,
+			},
+		},
+		Spec: api.PodSpec{
+			Containers: []api.Container{
+				{
+					Name:  podName,
+					Image: image,
+					Ports: []api.ContainerPort{{ContainerPort: 9376}},
+				},
+			},
+			NodeName:      nodeName,
+			RestartPolicy: api.RestartPolicyNever,
+		},
+	}
+}
+
+func newPodOnNode(c *client.Client, namespace, podName, nodeName string) error {
+	pod, err := c.Pods(namespace).Create(podOnNode(podName, nodeName, serveHostnameImage))
+	if err == nil {
+		Logf("Created pod %s on node %s", pod.ObjectMeta.Name, nodeName)
+	} else {
+		Logf("Failed to create pod %s on node %s: %v", podName, nodeName, err)
+	}
+	return err
+}
+
+func rcByName(name string, replicas int, image string, labels map[string]string) *api.ReplicationController {
+	return rcByNameContainer(name, replicas, image, labels, api.Container{
+		Name:  name,
+		Image: image,
+	})
+}
+
+func rcByNamePort(name string, replicas int, image string, port int, labels map[string]string) *api.ReplicationController {
+	return rcByNameContainer(name, replicas, image, labels, api.Container{
+		Name:  name,
+		Image: image,
+		Ports: []api.ContainerPort{{ContainerPort: port}},
+	})
+}
+
+func rcByNameContainer(name string, replicas int, image string, labels map[string]string, c api.Container) *api.ReplicationController {
+	// Add "name": name to the labels, overwriting if it exists.
+	labels["name"] = name
 	return &api.ReplicationController{
+		TypeMeta: api.TypeMeta{
+			Kind:       "ReplicationController",
+			APIVersion: latest.Version,
+		},
 		ObjectMeta: api.ObjectMeta{
 			Name: name,
 		},
@@ -136,28 +192,24 @@ func newReplicationControllerWithNameSelector(name string, replicas int, image s
 			},
 			Template: &api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
-					Labels: map[string]string{"name": name},
+					Labels: labels,
 				},
 				Spec: api.PodSpec{
-					Containers: []api.Container{
-						{
-							Name:  name,
-							Image: image,
-							Ports: []api.ContainerPort{{ContainerPort: 9376}},
-						},
-					},
+					Containers: []api.Container{c},
 				},
 			},
 		},
 	}
 }
 
-func createServeHostnameReplicationController(c *client.Client, ns, name string, replicas int) (*api.ReplicationController, error) {
+// newRCByName creates a replication controller with a selector by name of name.
+func newRCByName(c *client.Client, ns, name string, replicas int) (*api.ReplicationController, error) {
 	By(fmt.Sprintf("creating replication controller %s", name))
-	return c.ReplicationControllers(ns).Create(newReplicationControllerWithNameSelector(name, replicas, "gcr.io/google_containers/serve_hostname:1.1"))
+	return c.ReplicationControllers(ns).Create(rcByNamePort(
+		name, replicas, serveHostnameImage, 9376, map[string]string{}))
 }
 
-func resizeReplicationController(c *client.Client, ns, name string, replicas int) error {
+func resizeRC(c *client.Client, ns, name string, replicas int) error {
 	rc, err := c.ReplicationControllers(ns).Get(name)
 	if err != nil {
 		return err
@@ -167,7 +219,7 @@ func resizeReplicationController(c *client.Client, ns, name string, replicas int
 	return err
 }
 
-func waitForPodsCreated(c *client.Client, ns, name string, replicas int) (*api.PodList, error) {
+func podsCreated(c *client.Client, ns, name string, replicas int) (*api.PodList, error) {
 	// List the pods, making sure we observe all the replicas.
 	label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
 	for start := time.Now(); time.Since(start) < time.Minute; time.Sleep(5 * time.Second) {
@@ -176,15 +228,15 @@ func waitForPodsCreated(c *client.Client, ns, name string, replicas int) (*api.P
 			return nil, err
 		}
 
-		Logf("Controller %s: Found %d pods out of %d", name, len(pods.Items), replicas)
+		Logf("Pod name %s: Found %d pods out of %d", name, len(pods.Items), replicas)
 		if len(pods.Items) == replicas {
 			return pods, nil
 		}
 	}
-	return nil, fmt.Errorf("controller %s: Gave up waiting for %d pods to come up", name, replicas)
+	return nil, fmt.Errorf("Pod name %s: Gave up waiting for %d pods to come up", name, replicas)
 }
 
-func waitForPodsRunning(c *client.Client, pods *api.PodList) []error {
+func podsRunning(c *client.Client, pods *api.PodList) []error {
 	// Wait for the pods to enter the running state. Waiting loops until the pods
 	// are running so non-running pods cause a timeout for this test.
 	By("ensuring each pod is running")
@@ -199,28 +251,110 @@ func waitForPodsRunning(c *client.Client, pods *api.PodList) []error {
 	return e
 }
 
-func verifyPodsResponding(c *client.Client, ns, name string, pods *api.PodList) error {
+func podsResponding(c *client.Client, ns, name string, wantName bool, pods *api.PodList) error {
 	By("trying to dial each unique pod")
 	retryTimeout := 2 * time.Minute
 	retryInterval := 5 * time.Second
 	label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
-	return wait.Poll(retryInterval, retryTimeout, podResponseChecker{c, ns, label, name, pods}.checkAllResponses)
+	return wait.Poll(retryInterval, retryTimeout, podResponseChecker{c, ns, label, name, wantName, pods}.checkAllResponses)
 }
 
-func waitForPodsCreatedRunningResponding(c *client.Client, ns, name string, replicas int) error {
-	pods, err := waitForPodsCreated(c, ns, name, replicas)
+func verifyPods(c *client.Client, ns, name string, wantName bool, replicas int) error {
+	pods, err := podsCreated(c, ns, name, replicas)
 	if err != nil {
 		return err
 	}
-	e := waitForPodsRunning(c, pods)
+	e := podsRunning(c, pods)
 	if len(e) > 0 {
 		return fmt.Errorf("Failed to wait for pods running: %v", e)
 	}
-	err = verifyPodsResponding(c, ns, name, pods)
+	err = podsResponding(c, ns, name, wantName, pods)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// Blocks outgoing network traffic on 'node'. Then verifies that 'podNameToDisappear',
+// that belongs to replication controller 'rcName', really disappeared.
+// Finally, it checks that the replication controller recreates the
+// pods on another node and that now the number of replicas is equal 'replicas'.
+// At the end (even in case of errors), the network traffic is brought back to normal.
+// This function executes commands on a node so it will work only for some
+// environments.
+func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replicas int, podNameToDisappear string, node *api.Node) {
+	Logf("Getting external IP address for %s", node.Name)
+	host := ""
+	for _, a := range node.Status.Addresses {
+		if a.Type == api.NodeExternalIP {
+			host = a.Address + ":22"
+			break
+		}
+	}
+	if host == "" {
+		Failf("Couldn't get the external IP of host %s with addresses %v", node.Name, node.Status.Addresses)
+	}
+	By(fmt.Sprintf("block network traffic from node %s to the master", node.Name))
+
+	// TODO marekbiskup 2015-06-19 #10085
+	// The use of MasterName will cause iptables to do a DNS lookup to
+	// resolve the name to an IP address, which will slow down the test
+	// and cause it to fail if DNS is absent or broken.
+	// Use the IP address instead.
+
+	iptablesRule := fmt.Sprintf("OUTPUT --destination %s --jump DROP", testContext.CloudConfig.MasterName)
+	defer func() {
+		// This code will execute even if setting the iptables rule failed.
+		// It is on purpose because we may have an error even if the new rule
+		// had been inserted. (yes, we could look at the error code and ssh error
+		// separately, but I prefer to stay on the safe side).
+
+		By(fmt.Sprintf("Unblock network traffic from node %s to the master", node.Name))
+		undropCmd := fmt.Sprintf("sudo iptables --delete %s", iptablesRule)
+		// Undrop command may fail if the rule has never been created.
+		// In such case we just lose 30 seconds, but the cluster is healthy.
+		// But if the rule had been created and removing it failed, the node is broken and
+		// not coming back. Subsequent tests will run or fewer nodes (some of the tests
+		// may fail). Manual intervention is required in such case (recreating the
+		// cluster solves the problem too).
+		err := wait.Poll(time.Millisecond*100, time.Second*30, func() (bool, error) {
+			_, _, code, err := SSH(undropCmd, host, testContext.Provider)
+			if code == 0 && err == nil {
+				return true, nil
+			} else {
+				Logf("Expected 0 exit code and nil error when running '%s' on %s, got %d and %v",
+					undropCmd, node.Name, code, err)
+				return false, nil
+			}
+		})
+		if err != nil {
+			Failf("Failed to remove the iptable DROP rule. Manual intervention is "+
+				"required on node %s: remove rule %s, if exists", node.Name, iptablesRule)
+		}
+	}()
+
+	// The command will block all outgoing network traffic from the node to the master
+	// When multi-master is implemented, this test will have to be improved to block
+	// network traffic to all masters.
+	// We could also block network traffic from the master(s)s to this node,
+	// but blocking it one way is sufficient for this test.
+	dropCmd := fmt.Sprintf("sudo iptables --insert %s", iptablesRule)
+	if _, _, code, err := SSH(dropCmd, host, testContext.Provider); code != 0 || err != nil {
+		Failf("Expected 0 exit code and nil error when running %s on %s, got %d and %v",
+			dropCmd, node.Name, code, err)
+	}
+
+	Logf("Waiting for node %s to be not ready", node.Name)
+	waitForNodeToBe(c, node.Name, false, 2*time.Minute)
+
+	Logf("Waiting for pod %s to be removed", podNameToDisappear)
+	waitForRCPodToDisappear(c, ns, rcName, podNameToDisappear)
+
+	By("verifying whether the pod from the unreachable node is recreated")
+	err := verifyPods(c, ns, rcName, true, replicas)
+	Expect(err).NotTo(HaveOccurred())
+
+	// network traffic is unblocked in a defered function
 }
 
 var _ = Describe("Nodes", func() {
@@ -258,10 +392,10 @@ var _ = Describe("Nodes", func() {
 				return
 			}
 			By("restoring the original node instance group size")
-			if err := resizeNodeInstanceGroup(testContext.CloudConfig.NumNodes); err != nil {
+			if err := resizeGroup(testContext.CloudConfig.NumNodes); err != nil {
 				Failf("Couldn't restore the original node instance group size: %v", err)
 			}
-			if err := waitForNodeInstanceGroupSize(testContext.CloudConfig.NumNodes); err != nil {
+			if err := waitForGroupSize(testContext.CloudConfig.NumNodes); err != nil {
 				Failf("Couldn't restore the original node instance group size: %v", err)
 			}
 			if err := waitForClusterSize(c, testContext.CloudConfig.NumNodes); err != nil {
@@ -274,7 +408,7 @@ var _ = Describe("Nodes", func() {
 			Logf("starting test %s", testName)
 
 			if testContext.CloudConfig.NumNodes < 2 {
-				Failf("Failing test %s as it requires at lease 2 nodes (not %d)", testName, testContext.CloudConfig.NumNodes)
+				Failf("Failing test %s as it requires at least 2 nodes (not %d)", testName, testContext.CloudConfig.NumNodes)
 				return
 			}
 
@@ -282,53 +416,54 @@ var _ = Describe("Nodes", func() {
 			// The source for the Docker containter kubernetes/serve_hostname is in contrib/for-demos/serve_hostname
 			name := "my-hostname-delete-node"
 			replicas := testContext.CloudConfig.NumNodes
-			createServeHostnameReplicationController(c, ns, name, replicas)
-			err := waitForPodsCreatedRunningResponding(c, ns, name, replicas)
+			newRCByName(c, ns, name, replicas)
+			err := verifyPods(c, ns, name, true, replicas)
 			Expect(err).NotTo(HaveOccurred())
 
 			By(fmt.Sprintf("decreasing cluster size to %d", replicas-1))
-			err = resizeNodeInstanceGroup(replicas - 1)
+			err = resizeGroup(replicas - 1)
 			Expect(err).NotTo(HaveOccurred())
-			err = waitForNodeInstanceGroupSize(replicas - 1)
+			err = waitForGroupSize(replicas - 1)
 			Expect(err).NotTo(HaveOccurred())
 			err = waitForClusterSize(c, replicas-1)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying whether the pods from the removed node are recreated")
-			err = waitForPodsCreatedRunningResponding(c, ns, name, replicas)
+			err = verifyPods(c, ns, name, true, replicas)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		testName = "should be able to add nodes."
 		It(testName, func() {
+			// TODO: Bug here - testName is not correct
 			Logf("starting test %s", testName)
 
 			if testContext.CloudConfig.NumNodes < 2 {
-				Failf("Failing test %s as it requires at lease 2 nodes (not %d)", testName, testContext.CloudConfig.NumNodes)
+				Failf("Failing test %s as it requires at least 2 nodes (not %d)", testName, testContext.CloudConfig.NumNodes)
 				return
 			}
 
 			// Create a replication controller for a service that serves its hostname.
 			// The source for the Docker containter kubernetes/serve_hostname is in contrib/for-demos/serve_hostname
 			name := "my-hostname-add-node"
-			createServiceWithNameSelector(c, ns, name)
+			newSVCByName(c, ns, name)
 			replicas := testContext.CloudConfig.NumNodes
-			createServeHostnameReplicationController(c, ns, name, replicas)
-			err := waitForPodsCreatedRunningResponding(c, ns, name, replicas)
+			newRCByName(c, ns, name, replicas)
+			err := verifyPods(c, ns, name, true, replicas)
 			Expect(err).NotTo(HaveOccurred())
 
 			By(fmt.Sprintf("increasing cluster size to %d", replicas+1))
-			err = resizeNodeInstanceGroup(replicas + 1)
+			err = resizeGroup(replicas + 1)
 			Expect(err).NotTo(HaveOccurred())
-			err = waitForNodeInstanceGroupSize(replicas + 1)
+			err = waitForGroupSize(replicas + 1)
 			Expect(err).NotTo(HaveOccurred())
 			err = waitForClusterSize(c, replicas+1)
 			Expect(err).NotTo(HaveOccurred())
 
 			By(fmt.Sprintf("increasing size of the replication controller to %d and verifying all pods are running", replicas+1))
-			err = resizeReplicationController(c, ns, name, replicas+1)
+			err = resizeRC(c, ns, name, replicas+1)
 			Expect(err).NotTo(HaveOccurred())
-			err = waitForPodsCreatedRunningResponding(c, ns, name, replicas+1)
+			err = verifyPods(c, ns, name, true, replicas+1)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -341,10 +476,17 @@ var _ = Describe("Nodes", func() {
 			}
 		})
 
-		testName = "should survive network partition."
+		// TODO marekbiskup 2015-06-19 #10085
+		// This test has nothing to do with resizing nodes so it should be moved elsewhere.
+		// Two things are tested here:
+		// 1. pods from a uncontactable nodes are rescheduled
+		// 2. when a node joins the cluster, it can host new pods.
+		// Factor out the cases into two separate tests.
+
+		testName = "Uncontactable nodes, have their pods recreated by a replication controller, and can host new pods after rejoining."
 		It(testName, func() {
 			if testContext.CloudConfig.NumNodes < 2 {
-				By(fmt.Sprintf("skipping %s test, which requires at lease 2 nodes (not %d)",
+				By(fmt.Sprintf("skipping %s test, which requires at least 2 nodes (not %d)",
 					testName, testContext.CloudConfig.NumNodes))
 				return
 			}
@@ -352,60 +494,43 @@ var _ = Describe("Nodes", func() {
 			// Create a replication controller for a service that serves its hostname.
 			// The source for the Docker containter kubernetes/serve_hostname is in contrib/for-demos/serve_hostname
 			name := "my-hostname-net"
-			createServiceWithNameSelector(c, ns, name)
+			newSVCByName(c, ns, name)
 			replicas := testContext.CloudConfig.NumNodes
-			createServeHostnameReplicationController(c, ns, name, replicas)
-			err := waitForPodsCreatedRunningResponding(c, ns, name, replicas)
+			newRCByName(c, ns, name, replicas)
+			err := verifyPods(c, ns, name, true, replicas)
+			Expect(err).NotTo(HaveOccurred(), "Each pod should start running and responding")
+
+			By("choose a node with at least one pod - we will block some network traffic on this node")
+			label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
+			pods, err := c.Pods(ns).List(label, fields.Everything()) // list pods after all have been scheduled
+			Expect(err).NotTo(HaveOccurred())
+			nodeName := pods.Items[0].Spec.NodeName
+
+			node, err := c.Nodes().Get(nodeName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("cause network partition on one node")
-			nodelist, err := c.Nodes().List(labels.Everything(), fields.Everything())
-			Expect(err).NotTo(HaveOccurred())
-			node := nodelist.Items[0]
-			pod, err := waitForRCPodOnNode(c, ns, name, node.Name)
-			Expect(err).NotTo(HaveOccurred())
-			Logf("Getting external IP address for %s", name)
-			host := ""
-			for _, a := range node.Status.Addresses {
-				if a.Type == api.NodeExternalIP {
-					host = a.Address + ":22"
-					break
-				}
-			}
-			Logf("Setting network partition on %s", node.Name)
-			dropCmd := fmt.Sprintf("sudo iptables -I OUTPUT 1 -d %s -j DROP", testContext.CloudConfig.MasterName)
-			if _, _, code, err := SSH(dropCmd, host, testContext.Provider); code != 0 || err != nil {
-				Failf("Expected 0 exit code and nil error when running %s on %s, got %d and %v",
-					dropCmd, node, code, err)
-			}
-
-			Logf("Waiting for node %s to be not ready", node.Name)
-			waitForNodeToBe(c, node.Name, false, 2*time.Minute)
-
-			Logf("Waiting for pod %s to be removed", pod.Name)
-			waitForRCPodToDisappear(c, ns, name, pod.Name)
-
-			By("verifying whether the pod from the partitioned node is recreated")
-			err = waitForPodsCreatedRunningResponding(c, ns, name, replicas)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("remove network partition")
-			undropCmd := "sudo iptables --delete OUTPUT 1"
-			if _, _, code, err := SSH(undropCmd, host, testContext.Provider); code != 0 || err != nil {
-				Failf("Expected 0 exit code and nil error when running %s on %s, got %d and %v",
-					undropCmd, node, code, err)
-			}
-
+			By(fmt.Sprintf("block network traffic from node %s", node.Name))
+			performTemporaryNetworkFailure(c, ns, name, replicas, pods.Items[0].Name, node)
 			Logf("Waiting for node %s to be ready", node.Name)
 			waitForNodeToBe(c, node.Name, true, 2*time.Minute)
 
 			By("verify wheter new pods can be created on the re-attached node")
-			err = resizeReplicationController(c, ns, name, replicas+1)
+			// increasing the RC size is not a valid way to test this
+			// since we have no guarantees the pod will be scheduled on our node.
+			additionalPod := "additionalpod"
+			err = newPodOnNode(c, ns, additionalPod, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			err = waitForPodsCreatedRunningResponding(c, ns, name, replicas+1)
+			err = verifyPods(c, ns, additionalPod, true, 1)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = waitForRCPodOnNode(c, ns, name, node.Name)
-			Expect(err).NotTo(HaveOccurred())
+
+			// verify that it is really on the requested node
+			{
+				pod, err := c.Pods(ns).Get(additionalPod)
+				Expect(err).NotTo(HaveOccurred())
+				if pod.Spec.NodeName != node.Name {
+					Logf("Pod %s found on invalid node: %s instead of %s", pod.Spec.NodeName, node.Name)
+				}
+			}
 		})
 	})
 })

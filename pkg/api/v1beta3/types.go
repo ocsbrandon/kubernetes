@@ -115,6 +115,10 @@ type ObjectMeta struct {
 	// resource or set of resources. Only servers will generate resource versions.
 	ResourceVersion string `json:"resourceVersion,omitempty" description:"string that identifies the internal version of this object that can be used by clients to determine when objects have changed; populated by the system, read-only; value must be treated as opaque by clients and passed unmodified back to the server: http://docs.k8s.io/api-conventions.md#concurrency-control-and-consistency"`
 
+	// A sequence number representing a specific generation of the desired state.
+	// Currently only implemented by replication controllers.
+	Generation int64 `json:"generation,omitempty" description:"a sequence number representing a specific generation of the desired state; populated by the system; read-only"`
+
 	// CreationTimestamp is a timestamp representing the server time when this object was
 	// created. It is not guaranteed to be set in happens-before order across separate operations.
 	// Clients may not set this value. It is represented in RFC3339 form and is in UTC.
@@ -221,7 +225,7 @@ type VolumeSource struct {
 	// Glusterfs represents a Glusterfs mount on the host that shares a pod's lifetime
 	Glusterfs *GlusterfsVolumeSource `json:"glusterfs,omitempty" description:"Glusterfs volume that will be mounted on the host machine "`
 	// PersistentVolumeClaimVolumeSource represents a reference to a PersistentVolumeClaim in the same namespace
-	PersistentVolumeClaimVolumeSource *PersistentVolumeClaimVolumeSource `json:"persistentVolumeClaim,omitempty" description:"a reference to a PersistentVolumeClaim in the same namespace"`
+	PersistentVolumeClaim *PersistentVolumeClaimVolumeSource `json:"persistentVolumeClaim,omitempty" description:"a reference to a PersistentVolumeClaim in the same namespace"`
 	// RBD represents a Rados Block Device mount on the host that shares a pod's lifetime
 	RBD *RBDVolumeSource `json:"rbd,omitempty" description:"rados block volume that will be mounted on the host machine"`
 }
@@ -913,6 +917,8 @@ type PodStatus struct {
 	Conditions []PodCondition `json:"Condition,omitempty" description:"current service state of pod" patchStrategy:"merge" patchMergeKey:"type"`
 	// A human readable message indicating details about why the pod is in this state.
 	Message string `json:"message,omitempty" description:"human readable message indicating details about why the pod is in this condition"`
+	// A brief CamelCase message indicating details about why the pod is in this state. e.g. 'OutOfDisk'
+	Reason string `json:"reason,omitempty" description:"(brief-CamelCase) reason indicating details about why the pod is in this condition"`
 
 	HostIP string `json:"hostIP,omitempty" description:"IP address of the host to which the pod is assigned; empty if not yet scheduled"`
 	PodIP  string `json:"podIP,omitempty" description:"IP address allocated to the pod; routable at least within the cluster; empty if not yet allocated"`
@@ -1005,6 +1011,9 @@ type ReplicationControllerSpec struct {
 type ReplicationControllerStatus struct {
 	// Replicas is the number of actual replicas.
 	Replicas int `json:"replicas" description:"most recently oberved number of replicas"`
+
+	// ObservedGeneration is the most recent generation observed by the controller.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty" description:"reflects the generation of the most recently observed replication controller"`
 }
 
 // ReplicationController represents the configuration of a replication controller.

@@ -178,10 +178,11 @@ function copy-if-not-staged() {
   if already-staged "${tar}" "${hash}"; then
     echo "+++ $(basename ${tar}) already staged ('rm ${tar}.sha1' to force)"
   else
-    echo "${server_hash}" > "${tar}.sha1"
+    echo "${hash}" > "${tar}.sha1"
     gsutil -m -q -h "Cache-Control:private, max-age=0" cp "${tar}" "${tar}.sha1" "${staging_path}"
     gsutil -m acl ch -g all:R "${gs_url}" "${gs_url}.sha1" >/dev/null 2>&1
-    echo "${server_hash}" > "${tar}.uploaded.sha1"
+    echo "${hash}" > "${tar}.uploaded.sha1"
+    echo "+++ $(basename ${tar}) uploaded (sha1 = ${hash})"
   fi
 }
 
@@ -194,10 +195,14 @@ function copy-if-not-staged() {
 #   SALT_TAR
 # Vars set:
 #   SERVER_BINARY_TAR_URL
+#   SERVER_BINARY_TAR_HASH
 #   SALT_TAR_URL
+#   SALT_TAR_HASH
 function upload-server-tars() {
   SERVER_BINARY_TAR_URL=
+  SERVER_BINARY_TAR_HASH=
   SALT_TAR_URL=
+  SALT_TAR_HASH=
 
   local project_hash
   if which md5 > /dev/null 2>&1; then
@@ -220,16 +225,14 @@ function upload-server-tars() {
 
   local -r staging_path="${staging_bucket}/devel${KUBE_GCS_STAGING_PATH_SUFFIX}"
 
-  local server_hash
-  local salt_hash
-  server_hash=$(sha1sum-file "${SERVER_BINARY_TAR}")
-  salt_hash=$(sha1sum-file "${SALT_TAR}")
+  SERVER_BINARY_TAR_HASH=$(sha1sum-file "${SERVER_BINARY_TAR}")
+  SALT_TAR_HASH=$(sha1sum-file "${SALT_TAR}")
 
   echo "+++ Staging server tars to Google Storage: ${staging_path}"
   local server_binary_gs_url="${staging_path}/${SERVER_BINARY_TAR##*/}"
   local salt_gs_url="${staging_path}/${SALT_TAR##*/}"
-  copy-if-not-staged "${staging_path}" "${server_binary_gs_url}" "${SERVER_BINARY_TAR}" "${server_hash}"
-  copy-if-not-staged "${staging_path}" "${salt_gs_url}" "${SALT_TAR}" "${salt_hash}"
+  copy-if-not-staged "${staging_path}" "${server_binary_gs_url}" "${SERVER_BINARY_TAR}" "${SERVER_BINARY_TAR_HASH}"
+  copy-if-not-staged "${staging_path}" "${salt_gs_url}" "${SALT_TAR}" "${SALT_TAR_HASH}"
 
   # Convert from gs:// URL to an https:// URL
   SERVER_BINARY_TAR_URL="${server_binary_gs_url/gs:\/\//https://storage.googleapis.com/}"
@@ -247,7 +250,7 @@ function detect-minion-names {
   MINION_NAMES=($(gcloud preview --project "${PROJECT}" instance-groups \
     --zone "${ZONE}" instances --group "${NODE_INSTANCE_PREFIX}-group" list \
     | cut -d'/' -f11))
-  echo "MINION_NAMES=${MINION_NAMES[*]}"
+  echo "MINION_NAMES=${MINION_NAMES[*]}" >&2
 }
 
 # Waits until the number of running nodes in the instance group is equal to NUM_NODES
@@ -412,8 +415,9 @@ function create-node-template {
     fi
   fi
 
-  local attempt=0
+  local attempt=1
   while true; do
+    echo "Attempt ${attempt} to create ${1}" >&2
     if ! gcloud compute instance-templates create "$1" \
       --project "${PROJECT}" \
       --machine-type "${MINION_SIZE}" \
@@ -425,12 +429,12 @@ function create-node-template {
       --network "${NETWORK}" \
       $2 \
       --can-ip-forward \
-      --metadata-from-file "$3","$4"; then
+      --metadata-from-file "$3","$4" >&2; then
         if (( attempt > 5 )); then
           echo -e "${color_red}Failed to create instance template $1 ${color_norm}" >&2
           exit 2
         fi
-        echo -e "${color_yellow}Attempt $(($attempt+1)) failed to create instance template $1. Retrying.${color_norm}" >&2
+        echo -e "${color_yellow}Attempt ${attempt} failed to create instance template $1. Retrying.${color_norm}" >&2
         attempt=$(($attempt+1))
     else
         break
@@ -538,8 +542,12 @@ function write-node-env {
 #   KUBECFG_CERT_BASE64
 #   KUBECFG_KEY_BASE64
 function create-certs {
-  local cert_ip
-  cert_ip="${1}"
+  local -r cert_ip="${1}"
+
+  local octects=($(echo "$SERVICE_CLUSTER_IP_RANGE" | sed -e 's|/.*||' -e 's/\./ /g'))
+  ((octects[3]+=1))
+  local -r service_ip=$(echo "${octects[*]}" | sed 's/ /./g')
+  local -r sans="IP:${cert_ip},IP:${service_ip},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.${DNS_DOMAIN},DNS:${MASTER_NAME}"
 
   # Note: This was heavily cribbed from make-ca-cert.sh
   (cd "${KUBE_TEMP}"
@@ -548,7 +556,7 @@ function create-certs {
     cd easy-rsa-master/easyrsa3
     ./easyrsa init-pki > /dev/null 2>&1
     ./easyrsa --batch "--req-cn=${cert_ip}@$(date +%s)" build-ca nopass > /dev/null 2>&1
-    ./easyrsa --subject-alt-name=IP:"${cert_ip}",DNS:kubernetes,DNS:"${MASTER_NAME}" build-server-full "${MASTER_NAME}" nopass > /dev/null 2>&1
+    ./easyrsa --subject-alt-name="${sans}" build-server-full "${MASTER_NAME}" nopass > /dev/null 2>&1
     ./easyrsa build-client-full kubelet nopass > /dev/null 2>&1
     ./easyrsa build-client-full kubecfg nopass > /dev/null 2>&1) || {
     # If there was an error in the subshell, just die.
@@ -583,6 +591,27 @@ function kube-up {
   # Make sure we have the tar files staged on Google Storage
   find-release-tars
   upload-server-tars
+
+  local running_in_terminal=false
+  # May be false if tty is not allocated (for example with ssh -T).
+  if [ -t 1 ]; then
+    running_in_terminal=true
+  fi
+
+  if [[ ${running_in_terminal} == "true" || ${KUBE_UP_AUTOMATIC_CLEANUP} == "true" ]]; then
+    if ! check-resources; then
+      local run_kube_down="n"
+      echo "${KUBE_RESOURCE_FOUND} found." >&2
+      # Get user input only if running in terminal.
+      if [[ ${running_in_terminal} == "true" && ${KUBE_UP_AUTOMATIC_CLEANUP} == "false" ]]; then
+        read -p "Would you like to shut down the old cluster (call kube-down)? [y/N] " run_kube_down
+      fi
+      if [[ ${run_kube_down} == "y" || ${run_kube_down} == "Y" || ${KUBE_UP_AUTOMATIC_CLEANUP} == "true" ]]; then
+        echo "... calling kube-down" >&2
+        kube-down
+      fi
+    fi
+  fi
 
   if ! gcloud compute networks --project "${PROJECT}" describe "${NETWORK}" &>/dev/null; then
     echo "Creating new network: ${NETWORK}"
@@ -816,7 +845,7 @@ function kube-down {
   fi
 
   # Delete firewall rule for minions.
-  if gcloud compute firewall-rules describe "${PROJECT}" "${MINION_TAG}-all" &>/dev/null; then
+  if gcloud compute firewall-rules describe --project "${PROJECT}" "${MINION_TAG}-all" &>/dev/null; then
     gcloud compute firewall-rules delete  \
       --project "${PROJECT}" \
       --quiet \
@@ -855,6 +884,80 @@ function kube-down {
   export CONTEXT="${PROJECT}_${INSTANCE_PREFIX}"
   clear-kubeconfig
   set -e
+}
+
+# Checks if there are any present resources related kubernetes cluster.
+#
+# Assumed vars:
+#   MASTER_NAME
+#   NODE_INSTANCE_PREFIX
+#   ZONE
+# Vars set:
+#   KUBE_RESOURCE_FOUND
+
+function check-resources {
+  detect-project
+
+  echo "Looking for already existing resources"
+  KUBE_RESOURCE_FOUND=""
+
+  if gcloud preview managed-instance-groups --project "${PROJECT}" --zone "${ZONE}" describe "${NODE_INSTANCE_PREFIX}-group" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Managed instance group ${NODE_INSTANCE_PREFIX}-group"
+    return 1
+  fi
+
+  if gcloud compute instance-templates describe --project "${PROJECT}" "${NODE_INSTANCE_PREFIX}-template" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Instance template ${NODE_INSTANCE_PREFIX}-template"
+    return 1
+  fi
+
+  if gcloud compute instances describe --project "${PROJECT}" "${MASTER_NAME}" --zone "${ZONE}" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Kubernetes master ${MASTER_NAME}"
+    return 1
+  fi
+
+  if gcloud compute disks describe --project "${PROJECT}" "${MASTER_NAME}"-pd --zone "${ZONE}" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Persistent disk ${MASTER_NAME}-pd"
+    return 1
+  fi
+
+  # Find out what minions are running.
+  local -a minions
+  minions=( $(gcloud compute instances list \
+                --project "${PROJECT}" --zone "${ZONE}" \
+                --regexp "${NODE_INSTANCE_PREFIX}-.+" \
+                | awk 'NR >= 2 { print $1 }') )
+  if (( "${#minions[@]}" > 0 )); then
+    KUBE_RESOURCE_FOUND="${#minions[@]} matching matching ${NODE_INSTANCE_PREFIX}-.+"
+    return 1
+  fi
+
+  if gcloud compute firewall-rules describe --project "${PROJECT}" "${MASTER_NAME}-https" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Firewal rules for ${MASTER_NAME}-https"
+    return 1
+  fi
+
+  if gcloud compute firewall-rules describe --project "${PROJECT}" "${MINION_TAG}-all" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Firewal rules for ${MASTER_NAME}-all"
+    return 1
+  fi
+
+  local -a routes
+  routes=( $(gcloud compute routes list --project "${PROJECT}" \
+    --regexp "${INSTANCE_PREFIX}-minion-.{4}" | awk 'NR >= 2 { print $1 }') )
+  if (( "${#routes[@]}" > 0 )); then
+    KUBE_RESOURCE_FOUND="${#routes[@]} routes matching ${INSTANCE_PREFIX}-minion-.{4}"
+    return 1
+  fi
+
+  local REGION=${ZONE%-*}
+  if gcloud compute addresses describe --project "${PROJECT}" "${MASTER_NAME}-ip" --region "${REGION}" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Master's reserved IP"
+    return 1
+  fi
+
+  # No resources found.
+  return 0
 }
 
 # Prepare to push new binaries to kubernetes cluster

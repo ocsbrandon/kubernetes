@@ -62,6 +62,7 @@ func coreDump(dir string) {
 	ix := strings.LastIndex(config.Host, "/")
 	master := net.JoinHostPort(config.Host[ix+1:], "22")
 	cmds = []command{
+		{"cat /var/log/kubelet.log", "kubelet"},
 		{"cat /var/log/kube-apiserver.log", "kube-apiserver"},
 		{"cat /var/log/kube-scheduler.log", "kube-scheduler"},
 		{"cat /var/log/kube-controller-manager.log", "kube-controller-manager"},
@@ -76,7 +77,7 @@ func logCore(cmds []command, hosts []string, dir, provider string) {
 		fmt.Printf("SSH'ing to all nodes and running %s\n", cmd.cmd)
 		for _, host := range hosts {
 			wg.Add(1)
-			go func() {
+			go func(cmd command, host string) {
 				defer wg.Done()
 				logfile := fmt.Sprintf("%s/%s-%s.log", dir, host, cmd.component)
 				fmt.Printf("Writing to %s.\n", logfile)
@@ -87,7 +88,7 @@ func logCore(cmds []command, hosts []string, dir, provider string) {
 				if err := ioutil.WriteFile(logfile, []byte(stdout+stderr), 0777); err != nil {
 					fmt.Printf("Error writing logfile: %v\n", err)
 				}
-			}()
+			}(cmd, host)
 		}
 	}
 	wg.Wait()

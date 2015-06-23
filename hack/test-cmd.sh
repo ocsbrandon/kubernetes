@@ -141,6 +141,7 @@ for version in "${kube_api_versions[@]}"; do
   rc_status_replicas_field=".status.replicas"
   rc_container_image_field=".spec.template.spec.containers"
   port_field="(index .spec.ports 0).port"
+  image_field="(index .spec.containers 0).image"
 
   # Passing no arguments to create is an error
   ! kubectl create
@@ -306,6 +307,14 @@ for version in "${kube_api_versions[@]}"; do
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
+  ## --patch update pod can change image
+  # Pre-condition: valid-pod POD is running
+  kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
+  # Command
+  kubectl update "${kube_flags[@]}" pod valid-pod --patch='{"spec":{"containers":[{"name": "kubernetes-serve-hostname", "image": "nginx"}]}}'
+  # Post-condition: valid-pod POD has image nginx
+  kube::test::get_object_assert pods "{{range.items}}{{$image_field}}:{{end}}" 'nginx:'
+
   ### Overwriting an existing label is not permitted
   # Pre-condition: name is valid-pod
   kube::test::get_object_assert 'pod valid-pod' "{{${labels_field}.name}}" 'valid-pod'
@@ -390,7 +399,7 @@ for version in "${kube_api_versions[@]}"; do
   # Pre-condition: Only the default kubernetes services are running
   kube::test::get_object_assert services "{{range.items}}{{$id_field}}:{{end}}" 'kubernetes:'
   # Command
-  kubectl create -f examples/guestbook/redis-master-service.json "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/redis-master-service.yaml "${kube_flags[@]}"
   # Post-condition: redis-master service is running
   kube::test::get_object_assert services "{{range.items}}{{$id_field}}:{{end}}" 'kubernetes:redis-master:'
   # Describe command should print detailed information
@@ -456,8 +465,8 @@ __EOF__
   # Pre-condition: Only the default kubernetes services are running
   kube::test::get_object_assert services "{{range.items}}{{$id_field}}:{{end}}" 'kubernetes:'
   # Command
-  kubectl create -f examples/guestbook/redis-master-service.json "${kube_flags[@]}"
-  kubectl create -f examples/guestbook/redis-slave-service.json "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/redis-master-service.yaml "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/redis-slave-service.yaml "${kube_flags[@]}"
   # Post-condition: redis-master and redis-slave services are running
   kube::test::get_object_assert services "{{range.items}}{{$id_field}}:{{end}}" 'kubernetes:redis-master:redis-slave:'
 
@@ -476,11 +485,20 @@ __EOF__
 
   kube::log::status "Testing kubectl(${version}:replicationcontrollers)"
 
+  ### Create and stop controller, make sure it doesn't leak pods
+  # Pre-condition: no replication controller is running
+  kube::test::get_object_assert rc "{{range.items}}{{$id_field}}:{{end}}" ''
+  # Command
+  kubectl create -f examples/guestbook/frontend-controller.yaml "${kube_flags[@]}"
+  kubectl stop rc frontend "${kube_flags[@]}"
+  # Post-condition: no pods from frontend controller
+  kube::test::get_object_assert 'pods -l "name=frontend"' "{{range.items}}{{$id_field}}:{{end}}" ''
+
   ### Create replication controller frontend from JSON
   # Pre-condition: no replication controller is running
   kube::test::get_object_assert rc "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f examples/guestbook/frontend-controller.json "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/frontend-controller.yaml "${kube_flags[@]}"
   # Post-condition: frontend replication controller is running
   kube::test::get_object_assert rc "{{range.items}}{{$id_field}}:{{end}}" 'frontend:'
   # Describe command should print detailed information
@@ -548,8 +566,8 @@ __EOF__
   # Pre-condition: no replication controller is running
   kube::test::get_object_assert rc "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f examples/guestbook/frontend-controller.json "${kube_flags[@]}"
-  kubectl create -f examples/guestbook/redis-slave-controller.json "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/frontend-controller.yaml "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/redis-slave-controller.yaml "${kube_flags[@]}"
   # Post-condition: frontend and redis-slave
   kube::test::get_object_assert rc "{{range.items}}{{$id_field}}:{{end}}" 'frontend:redis-slave:'
 
@@ -615,6 +633,15 @@ __EOF__
 
   kube::test::describe_object_assert nodes "127.0.0.1" "Name:" "Labels:" "CreationTimestamp:" "Conditions:" "Addresses:" "Capacity:" "Pods:"
 
+  ### --patch update can mark node unschedulable
+  # Pre-condition: node is schedulable
+  kube::test::get_object_assert "nodes 127.0.0.1" "{{.spec.unschedulable}}" '<no value>'
+  kubectl update "${kube_flags[@]}" nodes "127.0.0.1" --patch='{"spec":{"unschedulable":true}}'
+  # Post-condition: node is unschedulable
+  kube::test::get_object_assert "nodes 127.0.0.1" "{{.spec.unschedulable}}" 'true'
+  kubectl update "${kube_flags[@]}" nodes "127.0.0.1" --patch='{"spec":{"unschedulable":null}}'
+  # Post-condition: node is schedulable
+  kube::test::get_object_assert "nodes 127.0.0.1" "{{.spec.unschedulable}}" '<no value>'
 
   ###########
   # Nodes #

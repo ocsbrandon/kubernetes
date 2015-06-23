@@ -86,6 +86,12 @@ type EC2 interface {
 	DescribeSubnets(*ec2.DescribeSubnetsInput) ([]*ec2.Subnet, error)
 
 	CreateTags(*ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error)
+
+	DescribeRouteTables(request *ec2.DescribeRouteTablesInput) ([]*ec2.RouteTable, error)
+	CreateRoute(request *ec2.CreateRouteInput) (*ec2.CreateRouteOutput, error)
+	DeleteRoute(request *ec2.DeleteRouteInput) (*ec2.DeleteRouteOutput, error)
+
+	ModifyInstanceAttribute(request *ec2.ModifyInstanceAttributeInput) (*ec2.ModifyInstanceAttributeOutput, error)
 }
 
 // This is a simple pass-through of the ELB client interface, which allows for testing
@@ -232,6 +238,14 @@ func newEc2Filter(name string, value string) *ec2.Filter {
 
 func (self *AWSCloud) AddSSHKeyToAllInstances(user string, keyData []byte) error {
 	return errors.New("unimplemented")
+}
+
+func (a *AWSCloud) CurrentNodeName(hostname string) (string, error) {
+	selfInstance, err := a.getSelfAWSInstance()
+	if err != nil {
+		return "", err
+	}
+	return selfInstance.awsID, nil
 }
 
 // Implementation of EC2.Instances
@@ -383,6 +397,27 @@ func (s *awsSdkEC2) RevokeSecurityGroupIngress(request *ec2.RevokeSecurityGroupI
 
 func (s *awsSdkEC2) CreateTags(request *ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error) {
 	return s.ec2.CreateTags(request)
+}
+
+func (s *awsSdkEC2) DescribeRouteTables(request *ec2.DescribeRouteTablesInput) ([]*ec2.RouteTable, error) {
+	// Not paged
+	response, err := s.ec2.DescribeRouteTables(request)
+	if err != nil {
+		return nil, fmt.Errorf("error listing AWS route tables: %v", err)
+	}
+	return response.RouteTables, nil
+}
+
+func (s *awsSdkEC2) CreateRoute(request *ec2.CreateRouteInput) (*ec2.CreateRouteOutput, error) {
+	return s.ec2.CreateRoute(request)
+}
+
+func (s *awsSdkEC2) DeleteRoute(request *ec2.DeleteRouteInput) (*ec2.DeleteRouteOutput, error) {
+	return s.ec2.DeleteRoute(request)
+}
+
+func (s *awsSdkEC2) ModifyInstanceAttribute(request *ec2.ModifyInstanceAttributeInput) (*ec2.ModifyInstanceAttributeOutput, error) {
+	return s.ec2.ModifyInstanceAttribute(request)
 }
 
 func init() {
@@ -542,12 +577,12 @@ func (aws *AWSCloud) Zones() (cloudprovider.Zones, bool) {
 
 // Routes returns an implementation of Routes for Amazon Web Services.
 func (aws *AWSCloud) Routes() (cloudprovider.Routes, bool) {
-	return nil, false
+	return aws, true
 }
 
 // NodeAddresses is an implementation of Instances.NodeAddresses.
 func (aws *AWSCloud) NodeAddresses(name string) ([]api.NodeAddress, error) {
-	instance, err := aws.getInstanceByDnsName(name)
+	instance, err := aws.getInstanceById(name)
 	if err != nil {
 		return nil, err
 	}
@@ -580,63 +615,29 @@ func (aws *AWSCloud) NodeAddresses(name string) ([]api.NodeAddress, error) {
 }
 
 // ExternalID returns the cloud provider ID of the specified instance (deprecated).
+// Note that if the instance does not exist or is no longer running, we must return ("", cloudprovider.InstanceNotFound)
 func (aws *AWSCloud) ExternalID(name string) (string, error) {
-	inst, err := aws.getInstanceByDnsName(name)
+	// We must verify that the instance still exists
+	instance, err := aws.getInstanceById(name)
 	if err != nil {
 		return "", err
 	}
-	return orEmpty(inst.InstanceID), nil
+	if instance == nil || !isAlive(instance) {
+		return "", cloudprovider.InstanceNotFound
+	}
+	return orEmpty(instance.InstanceID), nil
 }
 
 // InstanceID returns the cloud provider ID of the specified instance.
 func (aws *AWSCloud) InstanceID(name string) (string, error) {
-	inst, err := aws.getInstanceByDnsName(name)
+	// TODO: Do we need to verify it exists, or can we just construct it knowing our AZ (or via caching?)
+	inst, err := aws.getInstanceById(name)
 	if err != nil {
 		return "", err
 	}
 	// In the future it is possible to also return an endpoint as:
 	// <endpoint>/<zone>/<instanceid>
 	return "/" + orEmpty(inst.Placement.AvailabilityZone) + "/" + orEmpty(inst.InstanceID), nil
-}
-
-// Return the instances matching the relevant private dns name.
-func (s *AWSCloud) getInstanceByDnsName(name string) (*ec2.Instance, error) {
-	filters := []*ec2.Filter{
-		newEc2Filter("private-dns-name", name),
-	}
-	filters = s.addFilters(filters)
-	request := &ec2.DescribeInstancesInput{
-		Filters: filters,
-	}
-
-	instances, err := s.ec2.DescribeInstances(request)
-	if err != nil {
-		return nil, err
-	}
-
-	matchingInstances := []*ec2.Instance{}
-	for _, instance := range instances {
-		// TODO: Push running logic down into filter?
-		if !isAlive(instance) {
-			continue
-		}
-
-		if orEmpty(instance.PrivateDNSName) != name {
-			// TODO: Should we warn here? - the filter should have caught this
-			// (this will happen in the tests if they don't fully mock the EC2 API)
-			continue
-		}
-
-		matchingInstances = append(matchingInstances, instance)
-	}
-
-	if len(matchingInstances) == 0 {
-		return nil, fmt.Errorf("no instances found for host: %s", name)
-	}
-	if len(matchingInstances) > 1 {
-		return nil, fmt.Errorf("multiple instances found for host: %s", name)
-	}
-	return matchingInstances[0], nil
 }
 
 // Check if the instance is alive (running or pending)
@@ -698,16 +699,9 @@ func (s *AWSCloud) getInstancesByRegex(regex string) ([]string, error) {
 			continue
 		}
 
-		privateDNSName := orEmpty(instance.PrivateDNSName)
-		if privateDNSName == "" {
-			glog.V(2).Infof("skipping EC2 instance (no PrivateDNSName): %s",
-				orEmpty(instance.InstanceID))
-			continue
-		}
-
 		for _, tag := range instance.Tags {
 			if orEmpty(tag.Key) == "Name" && re.MatchString(orEmpty(tag.Value)) {
-				matchingInstances = append(matchingInstances, privateDNSName)
+				matchingInstances = append(matchingInstances, orEmpty(instance.InstanceID))
 				break
 			}
 		}
@@ -724,7 +718,7 @@ func (aws *AWSCloud) List(filter string) ([]string, error) {
 
 // GetNodeResources implements Instances.GetNodeResources
 func (aws *AWSCloud) GetNodeResources(name string) (*api.NodeResources, error) {
-	instance, err := aws.getInstanceByDnsName(name)
+	instance, err := aws.getInstanceById(name)
 	if err != nil {
 		return nil, err
 	}
@@ -858,6 +852,18 @@ func getResourcesByInstanceType(instanceType string) (*api.NodeResources, error)
 		return makeNodeResources("m3", 13, 15)
 	case "m3.2xlarge":
 		return makeNodeResources("m3", 26, 30)
+
+		// m4: General purpose
+	case "m4.large":
+		return makeNodeResources("m4", 6.5, 8)
+	case "m4.xlarge":
+		return makeNodeResources("m4", 13, 16)
+	case "m4.2xlarge":
+		return makeNodeResources("m4", 26, 32)
+	case "m4.4xlarge":
+		return makeNodeResources("m4", 53.5, 64)
+	case "m4.10xlarge":
+		return makeNodeResources("m4", 124.5, 160)
 
 		// i2: Storage optimized (SSD)
 	case "i2.xlarge":
@@ -1185,7 +1191,7 @@ func (aws *AWSCloud) getAwsInstance(instanceName string) (*awsInstance, error) {
 			return nil, fmt.Errorf("error getting self-instance: %v", err)
 		}
 	} else {
-		instance, err := aws.getInstanceByDnsName(instanceName)
+		instance, err := aws.getInstanceById(instanceName)
 		if err != nil {
 			return nil, fmt.Errorf("error finding instance: %v", err)
 		}
@@ -1652,7 +1658,7 @@ func (s *AWSCloud) CreateTCPLoadBalancer(name, region string, publicIP net.IP, p
 		return nil, fmt.Errorf("publicIP cannot be specified for AWS ELB")
 	}
 
-	instances, err := s.getInstancesByDnsNames(hosts)
+	instances, err := s.getInstancesByIds(hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -2064,7 +2070,7 @@ func (s *AWSCloud) EnsureTCPLoadBalancerDeleted(name, region string) error {
 
 // UpdateTCPLoadBalancer implements TCPLoadBalancer.UpdateTCPLoadBalancer
 func (s *AWSCloud) UpdateTCPLoadBalancer(name, region string, hosts []string) error {
-	instances, err := s.getInstancesByDnsNames(hosts)
+	instances, err := s.getInstancesByIds(hosts)
 	if err != nil {
 		return err
 	}
@@ -2139,19 +2145,38 @@ func (s *AWSCloud) UpdateTCPLoadBalancer(name, region string, hosts []string) er
 }
 
 // TODO: Make efficient
-func (a *AWSCloud) getInstancesByDnsNames(names []string) ([]*ec2.Instance, error) {
+func (a *AWSCloud) getInstancesByIds(ids []string) ([]*ec2.Instance, error) {
 	instances := []*ec2.Instance{}
-	for _, name := range names {
-		instance, err := a.getInstanceByDnsName(name)
+	for _, id := range ids {
+		instance, err := a.getInstanceById(id)
 		if err != nil {
 			return nil, err
 		}
 		if instance == nil {
-			return nil, fmt.Errorf("unable to find instance " + name)
+			return nil, fmt.Errorf("unable to find instance " + id)
 		}
 		instances = append(instances, instance)
 	}
 	return instances, nil
+}
+
+// Returns the instance with the specified ID
+func (a *AWSCloud) getInstanceById(instanceID string) (*ec2.Instance, error) {
+	request := &ec2.DescribeInstancesInput{
+		InstanceIDs: []*string{&instanceID},
+	}
+
+	instances, err := a.ec2.DescribeInstances(request)
+	if err != nil {
+		return nil, err
+	}
+	if len(instances) == 0 {
+		return nil, fmt.Errorf("no instances found for instance: %s", instanceID)
+	}
+	if len(instances) > 1 {
+		return nil, fmt.Errorf("multiple instances found for instance: %s", instanceID)
+	}
+	return instances[0], nil
 }
 
 // Add additional filters, to match on our tags
