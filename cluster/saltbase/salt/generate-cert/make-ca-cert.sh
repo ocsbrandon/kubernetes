@@ -71,10 +71,13 @@ else
     cp -p pki/issued/kubernetes-master.crt "${cert_dir}/server.cert" > /dev/null 2>&1
     cp -p pki/private/kubernetes-master.key "${cert_dir}/server.key" > /dev/null 2>&1
 fi
+./easyrsa build-server-full ${cert_ip}_serviceAccounts nopass > /dev/null 2>&1
+cp -p pki/issued/${cert_ip}_serviceAccounts.crt "${cert_dir}/serviceAccounts.cert" > /dev/null 2>&1
+cp -p pki/private/${cert_ip}_serviceAccounts.key "${cert_dir}/serviceAccounts.key" > /dev/null 2>&1
 ./easyrsa build-client-full kubecfg nopass > /dev/null 2>&1
 cp -p pki/ca.crt "${cert_dir}/ca.crt"
 cp -p pki/issued/kubecfg.crt "${cert_dir}/kubecfg.crt"
 cp -p pki/private/kubecfg.key "${cert_dir}/kubecfg.key"
 # Make server certs accessible to apiserver.
-chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt"
-chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt"
+chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"
+chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"
