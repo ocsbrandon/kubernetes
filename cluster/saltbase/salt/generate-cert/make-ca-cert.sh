@@ -66,11 +66,18 @@ if [ $use_cn = "true" ]; then
     ./easyrsa build-server-full $cert_ip nopass > /dev/null 2>&1
     cp -p pki/issued/$cert_ip.crt "${cert_dir}/server.cert" > /dev/null 2>&1
     cp -p pki/private/$cert_ip.key "${cert_dir}/server.key" > /dev/null 2>&1
+    ./easyrsa build-server-full serviceAccounts nopass > /dev/null 2>&1
+    cp -p pki/issued/serviceAccounts.crt "${cert_dir}/serviceAccounts.cert" > /dev/null 2>&1
+    cp -p pki/private/serviceAccounts.key "${cert_dir}/serviceAccounts.key" > /dev/null 2>&1
 else
     ./easyrsa --subject-alt-name=IP:$cert_ip build-server-full kubernetes-master nopass > /dev/null 2>&1
     cp -p pki/issued/kubernetes-master.crt "${cert_dir}/server.cert" > /dev/null 2>&1
     cp -p pki/private/kubernetes-master.key "${cert_dir}/server.key" > /dev/null 2>&1
+    ./easyrsa --subject-alt-name=SA:$cert_ip build-server-full serviceAccounts nopass > /dev/null 2>&1
+    cp -p pki/issued/serviceAccounts.crt "${cert_dir}/serviceAccounts.cert" > /dev/null 2>&1
+    cp -p pki/private/serviceAccounts.key "${cert_dir}/serviceAccounts.key" > /dev/null 2>&1
 fi
+#openssl genpkey -algorithm rsa -outform PEM -out ${cert_dir}/serviceAccounts.key
 ./easyrsa build-client-full kubecfg nopass > /dev/null 2>&1
 cp -p pki/ca.crt "${cert_dir}/ca.crt"
 cp -p pki/issued/kubecfg.crt "${cert_dir}/kubecfg.crt"
