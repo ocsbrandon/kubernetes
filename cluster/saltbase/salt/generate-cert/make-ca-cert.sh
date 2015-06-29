@@ -76,5 +76,5 @@ cp -p pki/ca.crt "${cert_dir}/ca.crt"
 cp -p pki/issued/kubecfg.crt "${cert_dir}/kubecfg.crt"
 cp -p pki/private/kubecfg.key "${cert_dir}/kubecfg.key"
 # Make server certs accessible to apiserver.
-chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt"
-chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt"
+chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"
+chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/ca.crt" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"

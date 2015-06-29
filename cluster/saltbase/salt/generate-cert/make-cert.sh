@@ -22,5 +22,11 @@ mkdir -p "$cert_dir"
 openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
   -subj "/CN=kubernetes.invalid/O=Kubernetes" \
   -keyout "${cert_dir}/server.key" -out "${cert_dir}/server.cert"
-chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert"
-chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert"
+
+openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+  -subj "/CN=kubernetes.invalid/O=Kubernetes" \
+  -keyout "${cert_dir}/serviceAccounts.key" -out "${cert_dir}/serviceAccounts.cert"
+
+chgrp $cert_group "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"
+chmod 660 "${cert_dir}/server.key" "${cert_dir}/server.cert" "${cert_dir}/serviceAccounts.key" "${cert_dir}/serviceAccounts.cert"
+
