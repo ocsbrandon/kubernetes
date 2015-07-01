@@ -25,6 +25,8 @@ cert_group=kube-cert
 mkdir -p "$cert_dir"
 
 use_cn=false
+use_sans=false
+sans=""
 
 # TODO: Add support for discovery on other providers?
 if [ "$cert_ip" == "_use_gce_external_ip_" ]; then
@@ -38,6 +40,16 @@ fi
 if [ "$cert_ip" == "_use_azure_dns_name_" ]; then
   cert_ip=$(uname -n | awk -F. '{ print $2 }').cloudapp.net
   use_cn=true
+fi
+
+if [ "$cert_ip" == "_use_vagrant_external_ip_" ]; then
+  cert_ip=$(/sbin/ifconfig eth1 | sed -n '2 p' | awk '{print $2}')
+  # TODO: These values should be passed in as args to script, but reducing risk of change to just vagrant
+  service_ip="10.247.0.1"
+  dns_domain="cluster.local"
+  master_name="kubernetes-master"
+  use_sans=true
+  sans="IP:${cert_ip},IP:${service_ip},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.${dns_domain},DNS:${master_name}"
 fi
 
 tmpdir=$(mktemp -d --tmpdir kubernetes_cacert.XXXXXX)
@@ -67,7 +79,11 @@ if [ $use_cn = "true" ]; then
     cp -p pki/issued/$cert_ip.crt "${cert_dir}/server.cert" > /dev/null 2>&1
     cp -p pki/private/$cert_ip.key "${cert_dir}/server.key" > /dev/null 2>&1
 else
+  if [ $use_sans = "true" ]; then
+    ./easyrsa --subject-alt-name="${sans}" build-server-full kubernetes-master nopass > /dev/null 2>&1
+  else
     ./easyrsa --subject-alt-name=IP:$cert_ip build-server-full kubernetes-master nopass > /dev/null 2>&1
+  fi
     cp -p pki/issued/kubernetes-master.crt "${cert_dir}/server.cert" > /dev/null 2>&1
     cp -p pki/private/kubernetes-master.key "${cert_dir}/server.key" > /dev/null 2>&1
 fi
