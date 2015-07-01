@@ -9,7 +9,7 @@
     {% set cert_ip='_use_azure_dns_name_' %}
   {% endif %}
   {% if grains.cloud == 'vagrant' %}
-    {% set cert_ip=grains.ip_interfaces.eth1[0] %}
+    {% set cert_ip='_use_vagrant_external_ip_' %}
   {% endif %}
   {% if grains.cloud == 'vsphere' %}
     {% set cert_ip=grains.ip_interfaces.eth0[0] %}
