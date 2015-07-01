@@ -81,6 +81,10 @@ function provision-network {
     done
     echo "Created persistent gre tunnels"
 
+    #add ip route rules such that all traffic for VMNet1 is routed by the Linux host
+    echo "Add ip route rules such that all traffic for VMNet1 is routed by the Linux host"
+    ip route add 192.168.44.0/24 via 10.245.1.1 dev eth1
+    
     # add ip route rules such that all pod traffic flows through docker bridge and consequently to the gre tunnels
     echo "Add ip route rules such that all pod traffic flows through docker bridge"
     ip route add ${CONTAINER_SUBNET} dev ${DOCKER_BRIDGE} scope link src ${CONTAINER_ADDR}
